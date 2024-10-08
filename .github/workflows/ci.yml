@@ -47,31 +47,15 @@ jobs:
             eval "$(/usr/local/bin/brew shellenv)"    # x86_64 Homebrew path (via Rosetta)
           fi
 
+      - name: Tap deprecated sdl formulas
+        run: |
+          brew tap homebrew/cask-versions
+          brew extract --version 2.0.5 sdl_image homebrew/cask-versions
+          brew extract --version 2.0.4 sdl_mixer homebrew/cask-versions
+
       - name: Install dependencies with Homebrew
         run: |
-          brew install cmake pkg-config sdl12-compat sdl_gfx yaml-cpp ccache
-
-      # Manually download and build SDL_image using autotools
-      - name: Download and install SDL_image
-        run: |
-          curl -LO https://www.libsdl.org/projects/SDL_image/release/SDL2_image-2.0.5.tar.gz
-          tar -xzf SDL2_image-2.0.5.tar.gz
-          cd SDL2_image-2.0.5
-          ./configure --prefix=$(brew --prefix sdl12-compat)  # Ensure SDL2 is found and installed in the correct path
-          make -j$(sysctl -n hw.ncpu)
-          sudo make install  # Install system-wide
-          sudo cp SDL2_image.pc $(brew --prefix sdl12-compat)/lib/pkgconfig/
-
-      # Manually download and build SDL_mixer using autotools
-      - name: Download and install SDL_mixer
-        run: |
-          curl -LO https://www.libsdl.org/projects/SDL_mixer/release/SDL2_mixer-2.0.4.tar.gz
-          tar -xzf SDL2_mixer-2.0.4.tar.gz
-          cd SDL2_mixer-2.0.4
-          ./configure --prefix=$(brew --prefix sdl12-compat)  # Ensure SDL2 is found and installed in the correct path
-          make -j$(sysctl -n hw.ncpu)
-          sudo make install  # Install system-wide
-          sudo cp SDL2_mixer.pc $(brew --prefix sdl12-compat)/lib/pkgconfig/
+          brew install cmake pkg-config sdl12-compat sdl_gfx yaml-cpp ccache sdl_image/2.0.5 sdl_mixer/2.0.4
 
       - name: Ensure pkg-config can find SDL dependencies
         run: |
