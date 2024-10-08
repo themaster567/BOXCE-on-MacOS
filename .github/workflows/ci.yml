@@ -80,16 +80,26 @@ jobs:
         run: |
           cmake -B build -DCMAKE_BUILD_TYPE=Release -DPKG_CONFIG_EXECUTABLE=$(brew --prefix pkg-config)/bin/pkg-config
 
+      - name: Link Homebrew libs in PostprocessBundle.cmake
+        run: |
+          FIND='fixup_bundle("${BUNDLE_PATH}" "${BUNDLE_LIBS}" "")'
+          REPLACE='fixup_bundle("${BUNDLE_PATH}" "${BUNDLE_LIBS}" "'$(brew --prefix)'/lib")'
+          sed -i '' "s,$FIND,$REPLACE," cmake/modules/PostprocessBundle.cmake
+
+      - name: Copy SDL2 to bundle
+        run: |
+          mkdir -p build/openxcom.app/Contents/Frameworks/
+          libSDL2=`brew info SDL2 | grep Cellar | awk '{print $1}'`
+          cp $libSDL2/lib/libSDL2-2.0.0.dylib build/openxcom.app/Contents/Frameworks
+
       - name: Build the project
         run: |
           cmake --build build --parallel $(( $(sysctl -n hw.ncpu) - 1 ))
-
-      # Fix SDL distribute, sign the app, and create a ZIP
+  
       - name: Fix, sign, and package the app
         run: |
           sudo xattr -cr build/openxcom.app
           codesign --force --deep --sign - build/openxcom.app
-          xattr -c build/openxcom.app
           cd build
           zip -r openxcom.zip openxcom.app
 
