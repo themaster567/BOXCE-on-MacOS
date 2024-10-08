@@ -95,7 +95,35 @@ jobs:
       - name: Build the project
         run: |
           cmake --build build --parallel $(( $(sysctl -n hw.ncpu) - 1 ))
-  
+
+      - name: Copy libraries to bundle
+        run: |
+          mkdir -p build/openxcom.app/Contents/Frameworks/
+          cp $(brew --prefix flac)/lib/libFLAC.12.dylib build/openxcom.app/Contents/Frameworks
+          cp $(brew --prefix jpeg)/lib/libjpeg.8.3.2.dylib build/openxcom.app/Contents/Frameworks
+          ln -s libjpeg.8.3.2.dylib build/openxcom.app/Contents/Frameworks/libjpeg.8.dylib
+          cp $(brew --prefix xz)/lib/liblzma.5.dylib build/openxcom.app/Contents/Frameworks
+          cp $(brew --prefix mikmod)/lib/libmikmod.3.dylib build/openxcom.app/Contents/Frameworks
+          cp $(brew --prefix libogg)/lib/libogg.0.dylib build/openxcom.app/Contents/Frameworks
+          cp $(brew --prefix libpng)/lib/libpng16.16.dylib build/openxcom.app/Contents/Frameworks
+          cp $(brew --prefix sdl_gfx)/lib/libSDL_gfx.15.dylib build/openxcom.app/Contents/Frameworks
+          cp $(brew --prefix sdl_image)/lib/libSDL_image-1.2.0.dylib build/openxcom.app/Contents/Frameworks
+          cp $(brew --prefix sdl_mixer)/lib/libSDL_mixer-1.2.0.dylib build/openxcom.app/Contents/Frameworks
+          cp $(brew --prefix sdl12-compat)/lib/libSDL-1.2.0.dylib build/openxcom.app/Contents/Frameworks
+          cp $(brew --prefix sdl2)/lib/libSDL2-2.0.0.dylib build/openxcom.app/Contents/Frameworks
+          cp $(brew --prefix libsharpyuv)/lib/libsharpyuv.0.1.0.dylib build/openxcom.app/Contents/Frameworks
+          ln -s libsharpyuv.0.1.0.dylib build/openxcom.app/Contents/Frameworks/libsharpyuv.0.dylib
+          cp $(brew --prefix libtiff)/lib/libtiff.6.dylib build/openxcom.app/Contents/Frameworks
+          cp $(brew --prefix libvorbis)/lib/libvorbis.0.dylib build/openxcom.app/Contents/Frameworks
+          cp $(brew --prefix libvorbis)/lib/libvorbisfile.3.dylib build/openxcom.app/Contents/Frameworks
+          cp $(brew --prefix libwebp)/lib/libwebp.7.1.9.dylib build/openxcom.app/Contents/Frameworks
+          ln -s libwebp.7.1.9.dylib build/openxcom.app/Contents/Frameworks/libwebp.7.dylib
+          cp $(brew --prefix yaml-cpp)/lib/libyaml-cpp.0.8.0.dylib build/openxcom.app/Contents/Frameworks
+          ln -s libyaml-cpp.0.8.0.dylib build/openxcom.app/Contents/Frameworks/libyaml-cpp.0.8.dylib
+          cp $(brew --prefix zstd)/lib/libzstd.1.5.6.dylib build/openxcom.app/Contents/Frameworks
+          ln -s libzstd.1.5.6.dylib build/openxcom.app/Contents/Frameworks/libzstd.1.dylib
+#if the above works I'll laugh so hard
+
       - name: Fix, sign, and package the app
         run: |
           sudo xattr -cr build/openxcom.app
