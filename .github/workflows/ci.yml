@@ -47,13 +47,18 @@ jobs:
             eval "$(/usr/local/bin/brew shellenv)"    # x86_64 Homebrew path (via Rosetta)
           fi
 
+      # Install SDL2 via Homebrew to ensure sdl2-config is available
+      - name: Install SDL2
+        run: |
+          brew install sdl2
+
       # Manually download and build SDL_image using autotools
       - name: Download and install SDL_image
         run: |
           curl -LO https://www.libsdl.org/projects/SDL_image/release/SDL2_image-2.0.5.tar.gz
           tar -xzf SDL2_image-2.0.5.tar.gz
           cd SDL2_image-2.0.5
-          ./configure
+          ./configure --with-sdl-prefix=$(brew --prefix sdl2)  # Ensure SDL2 is found
           make -j$(sysctl -n hw.ncpu)
           sudo make install  # Install system-wide
 
@@ -63,7 +68,7 @@ jobs:
           curl -LO https://www.libsdl.org/projects/SDL_mixer/release/SDL2_mixer-2.0.4.tar.gz
           tar -xzf SDL2_mixer-2.0.4.tar.gz
           cd SDL2_mixer-2.0.4
-          ./configure
+          ./configure --with-sdl-prefix=$(brew --prefix sdl2)  # Ensure SDL2 is found
           make -j$(sysctl -n hw.ncpu)
           sudo make install  # Install system-wide
 
