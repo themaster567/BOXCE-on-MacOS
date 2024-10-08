@@ -58,7 +58,7 @@ jobs:
           curl -LO https://www.libsdl.org/projects/SDL_image/release/SDL2_image-2.0.5.tar.gz
           tar -xzf SDL2_image-2.0.5.tar.gz
           cd SDL2_image-2.0.5
-          ./configure --with-sdl-prefix=$(brew --prefix sdl2)  # Ensure SDL2 is found
+          ./configure --prefix=$(brew --prefix sdl2)  # Ensure SDL2 is found and installed in the correct path
           make -j$(sysctl -n hw.ncpu)
           sudo make install  # Install system-wide
 
@@ -68,9 +68,15 @@ jobs:
           curl -LO https://www.libsdl.org/projects/SDL_mixer/release/SDL2_mixer-2.0.4.tar.gz
           tar -xzf SDL2_mixer-2.0.4.tar.gz
           cd SDL2_mixer-2.0.4
-          ./configure --with-sdl-prefix=$(brew --prefix sdl2)  # Ensure SDL2 is found
+          ./configure --prefix=$(brew --prefix sdl2)  # Ensure SDL2 is found and installed in the correct path
           make -j$(sysctl -n hw.ncpu)
           sudo make install  # Install system-wide
+
+      # Ensure pkg-config can find SDL2_image and SDL2_mixer
+      - name: Set PKG_CONFIG_PATH
+        run: |
+          export PKG_CONFIG_PATH=$(brew --prefix sdl2)/lib/pkgconfig:$PKG_CONFIG_PATH
+          echo "PKG_CONFIG_PATH=$PKG_CONFIG_PATH" >> $GITHUB_ENV
 
       - name: Install other dependencies with Homebrew
         run: |
@@ -78,7 +84,8 @@ jobs:
 
       - name: Generate project files with CMake
         run: |
-          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake -B build -DCMAKE_BUILD_TYPE=Release \
+            -DPKG_CONFIG_EXECUTABLE=$(brew --prefix pkg-config)/bin/pkg-config
 
       - name: Build the project
         run: |
