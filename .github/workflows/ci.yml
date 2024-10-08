@@ -84,10 +84,6 @@ jobs:
         run: |
           cmake --build build --parallel $(( $(sysctl -n hw.ncpu) - 1 ))
 
-      - name: Make install
-        run: |
-          cmake --install build
-
       - name: Archive built artifacts
         uses: actions/upload-artifact@v3
         with:
