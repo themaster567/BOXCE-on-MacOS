@@ -1,6 +1,9 @@
 name: CI Build for macOS (x86_64 and arm64)
 
-on: [push, pull_request]
+on:
+  push:  # Automatically triggered for pushes
+  pull_request:  # Automatically triggered for pull requests
+  workflow_dispatch:  # Manually triggered via the GitHub Actions UI
 
 jobs:
   build:
