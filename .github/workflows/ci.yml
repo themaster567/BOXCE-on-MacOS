@@ -84,22 +84,19 @@ jobs:
         run: |
           cmake --build build --parallel $(( $(sysctl -n hw.ncpu) - 1 ))
 
-      # Fix SDL distribute and sign the app
-      - name: Fix and sign the app
+      # Fix SDL distribute, sign the app, and create a ZIP
+      - name: Fix, sign, and package the app
         run: |
           sudo xattr -cr build/openxcom.app
           codesign --force --deep --sign - build/openxcom.app
-
-      - name: Prepare .app bundle for artifact
-        run: |
-          mkdir -p build-artifacts
-          mv build/openxcom.app build-artifacts/
+          cd build
+          zip -r openxcom.zip openxcom.app
 
       - name: Archive built artifacts
         uses: actions/upload-artifact@v3
         with:
           name: openxcom_${{ matrix.arch }}
-          path: build-artifacts/openxcom.app
+          path: build/openxcom.zip
 
       - name: ccache stats
         run: ccache -s --max-size=390MB
