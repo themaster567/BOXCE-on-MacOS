@@ -47,32 +47,18 @@ jobs:
             eval "$(/usr/local/bin/brew shellenv)"    # x86_64 Homebrew path (via Rosetta)
           fi
 
-      # Install SDL2 via Homebrew to ensure sdl2-config is available
-      - name: Install SDL2
+      - name: Install dependencies with Homebrew
         run: |
-          brew install sdl2
+          brew install cmake pkg-config sdl12-compat sdl_gfx sdl2_image sdl2_mixer yaml-cpp ccache
 
-      # Install SDL_image via Homebrew
-      - name: Install SDL_image
+      - name: Ensure pkg-config can find SDL dependencies
         run: |
-          brew --repository https://github.com/Homebrew/homebrew-core.git install sdl12-compat@0.32.3
-          brew --repository https://github.com/Homebrew/homebrew-core.git install sdl2_image@2.0.5
-
-      # Install SDL_mixer via Homebrew
-      - name: Install SDL_mixer
-        run: |
-          brew --repository https://github.com/Homebrew/homebrew-core.git install sdl12-compat@0.32.3
-          brew --repository https://github.com/Homebrew/homebrew-core.git install sdl2_mixer@2.0.4
-
-      - name: Install other dependencies with Homebrew
-        run: |
-          brew install cmake pkg-config yaml-cpp ccache
+          export PKG_CONFIG_PATH=$(brew --prefix sdl12-compat)/lib/pkgconfig:$PKG_CONFIG_PATH
+          echo "PKG_CONFIG_PATH=$PKG_CONFIG_PATH" >> $GITHUB_ENV
 
       - name: Generate project files with CMake
         run: |
-          cmake -B build -DCMAKE_BUILD_TYPE=Release \
-            -DPKG_CONFIG_EXECUTABLE=$(brew --prefix pkg-config)/bin/pkg-config \
-            -DCMAKE_PREFIX_PATH=$(brew --prefix sdl12-compat)/lib
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DPKG_CONFIG_EXECUTABLE=$(brew --prefix pkg-config)/bin/pkg-config
 
       - name: Build the project
         run: |
