@@ -84,11 +84,16 @@ jobs:
         run: |
           cmake --build build --parallel $(( $(sysctl -n hw.ncpu) - 1 ))
 
+      - name: Prepare .app bundle for artifact
+        run: |
+          mkdir -p build-artifacts
+          mv build/openxcom.app build-artifacts/
+
       - name: Archive built artifacts
         uses: actions/upload-artifact@v3
         with:
           name: openxcom_${{ matrix.arch }}
-          path: build/openxcom.app
+          path: build-artifacts/openxcom.app
 
       - name: ccache stats
         run: ccache -s --max-size=390MB
