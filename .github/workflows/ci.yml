@@ -47,9 +47,30 @@ jobs:
             eval "$(/usr/local/bin/brew shellenv)"    # x86_64 Homebrew path (via Rosetta)
           fi
 
-      - name: Install dependencies with Homebrew
+      # Manually download and install SDL_image and SDL_mixer since they are deprecated in Homebrew
+      - name: Download and install SDL_image
         run: |
-          brew install cmake pkg-config sdl12-compat sdl_gfx sdl_image sdl_mixer yaml-cpp ccache
+          curl -LO https://www.libsdl.org/projects/SDL_image/release/SDL2_image-2.0.5.tar.gz
+          tar -xzf SDL2_image-2.0.5.tar.gz
+          cd SDL2_image-2.0.5
+          mkdir build && cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release
+          make -j$(sysctl -n hw.ncpu)
+          sudo make install  # Install system-wide
+
+      - name: Download and install SDL_mixer
+        run: |
+          curl -LO https://www.libsdl.org/projects/SDL_mixer/release/SDL2_mixer-2.0.4.tar.gz
+          tar -xzf SDL2_mixer-2.0.4.tar.gz
+          cd SDL2_mixer-2.0.4
+          mkdir build && cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release
+          make -j$(sysctl -n hw.ncpu)
+          sudo make install  # Install system-wide
+
+      - name: Install other dependencies with Homebrew
+        run: |
+          brew install cmake pkg-config sdl12-compat sdl_gfx yaml-cpp ccache
 
       - name: Generate project files with CMake
         run: |
