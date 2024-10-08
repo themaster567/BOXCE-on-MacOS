@@ -89,6 +89,7 @@ jobs:
         run: |
           sudo xattr -cr build/openxcom.app
           codesign --force --deep --sign - build/openxcom.app
+          xattr -c build/openxcom.app
           cd build
           zip -r openxcom.zip openxcom.app
 
