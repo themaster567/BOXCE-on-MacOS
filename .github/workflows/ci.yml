@@ -60,6 +60,7 @@ jobs:
           ./configure --prefix=$(brew --prefix sdl12-compat)  # Ensure SDL2 is found and installed in the correct path
           make -j$(sysctl -n hw.ncpu)
           sudo make install  # Install system-wide
+          sudo cp SDL2_image.pc $(brew --prefix sdl12-compat)/lib/pkgconfig/
 
       # Manually download and build SDL_mixer using autotools
       - name: Download and install SDL_mixer
@@ -70,6 +71,7 @@ jobs:
           ./configure --prefix=$(brew --prefix sdl12-compat)  # Ensure SDL2 is found and installed in the correct path
           make -j$(sysctl -n hw.ncpu)
           sudo make install  # Install system-wide
+          sudo cp SDL2_mixer.pc $(brew --prefix sdl12-compat)/lib/pkgconfig/
 
       - name: Ensure pkg-config can find SDL dependencies
         run: |
