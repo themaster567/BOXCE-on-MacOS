@@ -73,7 +73,7 @@ jobs:
 
       - name: Ensure pkg-config can find SDL dependencies
         run: |
-          export PKG_CONFIG_PATH=$(brew --prefix)/lib/pkgconfig:$PKG_CONFIG_PATH
+          export PKG_CONFIG_PATH=$(brew --prefix sdl12-compat)/lib/pkgconfig:$PKG_CONFIG_PATH
           echo "PKG_CONFIG_PATH=$PKG_CONFIG_PATH" >> $GITHUB_ENV
 
       - name: Generate project files with CMake
