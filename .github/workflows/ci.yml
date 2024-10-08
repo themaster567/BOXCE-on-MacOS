@@ -84,6 +84,12 @@ jobs:
         run: |
           cmake --build build --parallel $(( $(sysctl -n hw.ncpu) - 1 ))
 
+      # Fix SDL distribute and sign the app
+      - name: Fix and sign the app
+        run: |
+          sudo xattr -cr build/openxcom.app
+          codesign --force --deep --sign - build/openxcom.app
+
       - name: Prepare .app bundle for artifact
         run: |
           mkdir -p build-artifacts
