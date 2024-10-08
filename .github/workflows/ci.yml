@@ -47,53 +47,38 @@ jobs:
             eval "$(/usr/local/bin/brew shellenv)"    # x86_64 Homebrew path (via Rosetta)
           fi
 
-      # Install SDL2 via Homebrew to ensure sdl2-config is available
-      - name: Install SDL2
+      # Install SDL2 and other dependencies via Homebrew
+      - name: Install dependencies with Homebrew
         run: |
-          brew install sdl2
-
-      # Manually download and build SDL_image using autotools
-      - name: Download and install SDL_image
-        run: |
-          curl -LO https://www.libsdl.org/projects/SDL_image/release/SDL2_image-2.0.5.tar.gz
-          tar -xzf SDL2_image-2.0.5.tar.gz
-          cd SDL2_image-2.0.5
-          ./configure --prefix=$(brew --prefix sdl2)  # Ensure SDL2 is found and installed in the correct path
-          make -j$(sysctl -n hw.ncpu)
-          sudo make install  # Install system-wide
-
-      # Manually download and build SDL_mixer using autotools
-      - name: Download and install SDL_mixer
-        run: |
-          curl -LO https://www.libsdl.org/projects/SDL_mixer/release/SDL2_mixer-2.0.4.tar.gz
-          tar -xzf SDL2_mixer-2.0.4.tar.gz
-          cd SDL2_mixer-2.0.4
-          ./configure --prefix=$(brew --prefix sdl2)  # Ensure SDL2 is found and installed in the correct path
-          make -j$(sysctl -n hw.ncpu)
-          sudo make install  # Install system-wide
-
-      # Ensure pkg-config can find SDL2_image and SDL2_mixer
-      - name: Set PKG_CONFIG_PATH
-        run: |
-          export PKG_CONFIG_PATH=$(brew --prefix sdl2)/lib/pkgconfig:$PKG_CONFIG_PATH
-          echo "PKG_CONFIG_PATH=$PKG_CONFIG_PATH" >> $GITHUB_ENV
-
-      - name: Install other dependencies with Homebrew
-        run: |
-          brew install cmake pkg-config sdl12-compat sdl_gfx yaml-cpp ccache
+          brew install cmake pkg-config sdl12-compat sdl_gfx yaml-cpp ccache sdl2 sdl_image sdl_mixer
 
       - name: Generate project files with CMake
         run: |
-          cmake -B build -DCMAKE_BUILD_TYPE=Release \
-            -DPKG_CONFIG_EXECUTABLE=$(brew --prefix pkg-config)/bin/pkg-config
+          mkdir -p build
+          cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release
+
+      - name: Link HomeBrew libs in OpenXcom/cmake/modules/PostprocessBundle.cmake
+        run: |
+          FIND='fixup_bundle("${BUNDLE_PATH}" "${BUNDLE_LIBS}" "")'
+          REPLACE='fixup_bundle("${BUNDLE_PATH}" "${BUNDLE_LIBS}" "'$(brew --prefix)'/lib")'
+          sed -i '' "s,$FIND,$REPLACE," ../cmake/modules/PostprocessBundle.cmake
+
+      - name: Copy SDL2 to bundle
+        run: |
+          mkdir -p openxcom.app/Contents/Frameworks/
+          libSDL2=$(brew --prefix sdl2)/lib/libSDL2-2.0.0.dylib
+          cp $libSDL2 openxcom.app/Contents/Frameworks
 
       - name: Build the project
         run: |
-          cmake --build build --parallel $(( $(sysctl -n hw.ncpu) - 1 ))
+          cd build
+          make -j$(( $(sysctl -n hw.ncpu) - 1 ))
 
-      - name: Make install
+      - name: Fix SDL distribute
         run: |
-          cmake --install build
+          sudo xattr -cr build/openxcom.app
+          codesign --force --deep --sign - build/openxcom.app
 
       - name: Archive built artifacts
         uses: actions/upload-artifact@v3
