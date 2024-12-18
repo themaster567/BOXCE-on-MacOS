@@ -45,7 +45,7 @@ keyBattleCenterEnemy9, keyBattleCenterEnemy10, keyBattleVoxelView, keyBattleZero
 
 // AI options
 OPT bool sneakyAI, brutalAI, cheatOnMovement, brutalCivilians, ignoreDelay, allowPreprime, autoCombat, aiPerformanceOptimization, avoidMines, avoidCuddle;
-OPT int aiTargetMode, aggression, intelligence;
+OPT int aiTargetMode, aggression;
 OPT bool autoCombatEachCombat, autoCombatEachTurn, autoCombatControlPerUnit;
 OPT bool autoCombatDefaultSoldier, autoCombatDefaultHWP, autoCombatDefaultMindControl, autoCombatDefaultRemain;
 
@@ -79,6 +79,7 @@ OPT int oxceGeoAutosaveFrequency;
 OPT int oxceGeoAutosaveSlots;
 OPT bool oxceLinks;
 OPT bool oxceFatFingerLinks;
+OPT bool oxceQuickSearchButton;
 OPT bool oxceHighlightNewTopics;
 OPT bool oxcePediaShowClipSize;
 
@@ -186,6 +187,7 @@ OPT SDLKey keyReadyLightGrenade;
 OPT SDLKey keyReadyHeavyGrenade;
 OPT SDLKey keyReadyProximityGrenade;
 OPT SDLKey keyReadySmokeGrenade;
+OPT SDLKey keyReadyStunGrenade;
 OPT SDLKey keyReadyFlare;
 OPT SDLKey keyReadyScanner;
 OPT SDLKey keyReadyMedikit;

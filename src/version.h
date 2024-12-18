@@ -18,11 +18,13 @@
  * along with OpenXcom.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#define MIN_REQUIRED_RULESET_VERSION_NUMBER 7,15,0,0
+
 #define OPENXCOM_VERSION_ENGINE "Extended"
-#define OPENXCOM_VERSION_SHORT "Extended Brutal 7.14.4 9.1.6"
-#define OPENXCOM_VERSION_LONG "7.14.4.0"
-#define OPENXCOM_VERSION_NUMBER 7,14,4,0
+#define OPENXCOM_VERSION_SHORT "Extended Brutal 7.15.0 9.2.1"
+#define OPENXCOM_VERSION_LONG "7.15.0.0"
+#define OPENXCOM_VERSION_NUMBER 7,15,0,0
 
 #ifndef OPENXCOM_VERSION_GIT
-#define OPENXCOM_VERSION_GIT " (v2024-10-04)"
+#define OPENXCOM_VERSION_GIT " (v2024-11-05)"
 #endif

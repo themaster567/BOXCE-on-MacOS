@@ -3710,7 +3710,7 @@ void AIModule::brutalThink(BattleAction* action)
 								directPeakScore = remainingTimeUnits;
 						}
 					}
-					if (visiblePathFromMyPos < visiblePath && (myMaxTU == _unit->getTimeUnits() || _save->getTileEngine()->isNextToDoor(myTile)))
+					if (!_unit->isCheatOnMovement() && visiblePathFromMyPos < visiblePath && (myMaxTU == _unit->getTimeUnits() || _save->getTileEngine()->isNextToDoor(myTile)))
 						indirectPeakScore = visiblePath;
 				}
 			}
@@ -3896,39 +3896,6 @@ void AIModule::brutalThink(BattleAction* action)
 				directPeakScore /= 10;
 				indirectPeakScore /= 10;
 			}
-			float intelligenceDeviation = 0.2f * _unit->getBrutalIntelligence();
-			if (intelligenceDeviation < 1.0)
-			{
-				float rngResult = RNG::generate(0.0, 1.0);
-				if (rngResult > intelligenceDeviation)
-				{
-					if (attackScore > 0)
-						attackScore = rngResult;
-					if (greatCoverScore > 0)
-						greatCoverScore = rngResult;
-					if (goodCoverScore > 0)
-						goodCoverScore = rngResult;
-					if (okayCoverScore > 0)
-						okayCoverScore = rngResult;
-					if (directPeakScore > 0)
-						directPeakScore = rngResult;
-					if (indirectPeakScore > 0)
-						indirectPeakScore = rngResult;
-					if (fallbackScore > 0)
-						fallbackScore = rngResult;
-				}
-				else
-				{
-					rngResult = RNG::generate(intelligenceDeviation, 1.0);
-					attackScore *= rngResult;
-					greatCoverScore *= rngResult;
-					goodCoverScore *= rngResult;
-					okayCoverScore *= rngResult;
-					directPeakScore *= rngResult;
-					indirectPeakScore *= rngResult;
-					fallbackScore *= rngResult;
-				}
-			}
 			if (attackScore > bestAttackScore)
 			{
 				bestAttackScore = attackScore;
@@ -3971,7 +3938,7 @@ void AIModule::brutalThink(BattleAction* action)
 			//{
 			//	tile->setMarkerColor(_unit->getId()%100);
 			//	tile->setPreview(10);
-			//	tile->setTUMarker(_save->getTileEngine()->isNextToDoor(tile));
+			//	tile->setTUMarker(discoverThreat);
 			//}
 		}
 		if (_traceAI)
@@ -4019,11 +3986,17 @@ void AIModule::brutalThink(BattleAction* action)
 	}
 	if (moveTU <= _unit->getTimeUnits() - attackTU)
 		haveTUToAttack = true;
-	if (bestAttackScore > 0 && !haveTUToAttack)
+	if (bestAttackScore > 0 && !haveTUToAttack && bestGreatCoverScore + bestGoodCoverScore + bestOkayCoverScore > 0)
 	{
 		shouldHaveLofAfterMove = iHaveLof;
 		if (_traceAI)
 			Log(LOG_INFO) << "Attack dismissed due to lack of TU to go back to hiding-spot afterwards. Attack + Hide: " << attackTU << " move: " << moveTU << " current: " << _unit->getTimeUnits();
+	}
+	else if (bestAttackScore > 0)
+	{
+		haveTUToAttack = true;
+		_tuCostToReachClosestPositionToBreakLos = -1;
+		_energyCostToReachClosestPositionToBreakLos = -1;
 	}
 	int newVisibleTilesDirect = 0;
 	int newVisibleTilesInDirect = 0;

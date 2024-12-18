@@ -420,9 +420,11 @@ void createAdvancedOptionsOXCE()
 #ifdef __MOBILE__
 	_info.push_back(OptionInfo(OPTION_OXCE, "oxceLinks", &oxceLinks, true, "STR_OXCE_LINKS", "STR_GENERAL"));
 	_info.push_back(OptionInfo(OPTION_OXCE, "oxceFatFingerLinks", &oxceFatFingerLinks, true, "", "HIDDEN"));
+	_info.push_back(OptionInfo(OPTION_OXCE, "oxceQuickSearchButton", &oxceQuickSearchButton, true, "", "HIDDEN"));
 #else
 	_info.push_back(OptionInfo(OPTION_OXCE, "oxceLinks", &oxceLinks, false, "STR_OXCE_LINKS", "STR_GENERAL"));
 	_info.push_back(OptionInfo(OPTION_OXCE, "oxceFatFingerLinks", &oxceFatFingerLinks, false, "", "HIDDEN"));
+	_info.push_back(OptionInfo(OPTION_OXCE, "oxceQuickSearchButton", &oxceQuickSearchButton, false, "", "HIDDEN"));
 #endif
 
 	_info.push_back(OptionInfo(OPTION_OXCE, "oxceHighlightNewTopics", &oxceHighlightNewTopics, true, "STR_HIGHLIGHT_NEW", "STR_GENERAL"));
@@ -569,7 +571,6 @@ void createAdvancedOptionsOTHER()
 	_info.push_back(OptionInfo(OPTION_OTHER, "aiPeformance", &aiPerformanceOptimization, false, "STR_AI_PERFORMANCE", "STR_AI"));
 	_info.push_back(OptionInfo(OPTION_OTHER, "aiTargetMode", &aiTargetMode, 3, "STR_AITARGETMODE", "STR_AI"));
 	_info.push_back(OptionInfo(OPTION_OTHER, "aggression", &aggression, 1, "STR_AGGRESSIONMODE", "STR_AI"));
-	_info.push_back(OptionInfo(OPTION_OTHER, "intelligence", &intelligence, 5, "STR_INTELLIGENCEMODE", "STR_AI"));
 	_info.push_back(OptionInfo(OPTION_OTHER, "autoCombat", &autoCombat, false, "STR_AUTOCOMBAT", "STR_AI"));
 	_info.push_back(OptionInfo(OPTION_OTHER, "autoCombatEachCombat", &autoCombatEachCombat, true, "STR_AUTOCOMBAT_EACH_COMBAT", "STR_AI"));
 	_info.push_back(OptionInfo(OPTION_OTHER, "autoCombatEachTurn", &autoCombatEachTurn, true, "STR_AUTOCOMBAT_EACH_TURN", "STR_AI"));
@@ -588,6 +589,7 @@ void createControlsOTHER()
 	_info.push_back(OptionInfo(OPTION_OTHER, "keyReadyHeavyGrenade", &keyReadyHeavyGrenade, SDLK_PERIOD, "STR_KEY_READY_HEAVY_GRENADE", "STR_BATTLESCAPE"));
 	_info.push_back(OptionInfo(OPTION_OTHER, "keyReadyProximityGrenade", &keyReadyProximityGrenade, SDLK_SLASH, "STR_KEY_READY_PROXIMITY_GRENADE", "STR_BATTLESCAPE"));
 	_info.push_back(OptionInfo(OPTION_OTHER, "keyReadySmokeGrenade", &keyReadySmokeGrenade, SDLK_SEMICOLON, "STR_KEY_READY_SMOKE_GRENADE", "STR_BATTLESCAPE"));
+	_info.push_back(OptionInfo(OPTION_OTHER, "keyReadyStunGrenade", &keyReadyStunGrenade, SDLK_EQUALS, "STR_KEY_READY_STUN_GRENADE", "STR_BATTLESCAPE"));
 	_info.push_back(OptionInfo(OPTION_OTHER, "keyReadyFlare", &keyReadyFlare, SDLK_QUOTE, "STR_KEY_READY_FLARE", "STR_BATTLESCAPE"));
 	_info.push_back(OptionInfo(OPTION_OTHER, "keyReadyScanner", &keyReadyScanner, SDLK_RIGHTBRACKET, "STR_KEY_READY_SCANNER", "STR_BATTLESCAPE"));
 	_info.push_back(OptionInfo(OPTION_OTHER, "keyReadyMedikit", &keyReadyMedikit, SDLK_LEFTBRACKET, "STR_KEY_READY_MEDIKIT", "STR_BATTLESCAPE"));
@@ -1142,6 +1144,18 @@ std::string getActiveMaster()
 const ModInfo* getActiveMasterInfo()
 {
 	return &_modInfos.at(_masterMod);
+}
+
+/**
+ * Gets the xcom ruleset info.
+ */
+const ModInfo* getXcomRulesetInfo()
+{
+	if (_modInfos.find("xcom1") != _modInfos.end())
+		return &_modInfos.at("xcom1");
+	else if (_modInfos.find("xcom2") != _modInfos.end())
+		return &_modInfos.at("xcom2");
+	else return nullptr;
 }
 
 bool getLoadLastSave()
