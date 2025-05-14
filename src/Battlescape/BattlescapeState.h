@@ -114,7 +114,7 @@ private:
 	void toggleKneelButton(BattleUnit* unit);
 public:
 	/// Selects the next soldier.
-	void selectNextPlayerUnit(bool checkReselect = false, bool setReselect = false, bool checkInventory = false, bool checkFOV = true);
+	void selectNextPlayerUnit(bool checkReselect = false, bool setReselect = false, bool checkInventory = false, bool checkFOV = true, bool byDistance = false);
 	/// Selects the previous soldier.
 	void selectPreviousPlayerUnit(bool checkReselect = false, bool setReselect = false, bool checkInventory = false);
 	static const int DEFAULT_ANIM_SPEED = 100;
@@ -154,7 +154,9 @@ public:
 	/// Handler for clicking the Next Soldier button.
 	void btnNextSoldierClick(Action *action);
 	/// Handler for clicking the Next Stop button.
-	void btnNextStopClick(Action *action);
+	void btnNextStopLClick(Action *action);
+	void btnNextStopMClick(Action *action);
+	void btnNextStopRClick(Action *action);
 	/// Handler for clicking the Previous Soldier button.
 	void btnPrevSoldierClick(Action *action);
 	/// Handler for clicking the Show Layers button.

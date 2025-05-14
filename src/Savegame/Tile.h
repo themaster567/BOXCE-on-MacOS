@@ -60,22 +60,19 @@ public:
 	/// Register all useful function used by script.
 	static void ScriptRegister(ScriptParserBase* parser);
 
-	typedef struct SerializationKey
+	static struct SerializationKey
 	{
-
 		Uint8 index; // for indexing the actual tile array
 		Uint8 _mapDataSetID;
 		Uint8 _mapDataID;
 		Uint8 _smoke;
 		Uint8 _fire;
 		Uint8 boolFields;
-		Uint16 _lastExploredByHostile;
-		Uint16 _lastExploredByNeutral;
-		Uint16 _lastExploredByPlayer;
+		Uint8 _lastExploredByHostile;
+		Uint8 _lastExploredByNeutral;
+		Uint8 _lastExploredByPlayer;
 		Uint32 totalBytes; // per structure, including any data not mentioned here and accounting for all array members!
-
-		static const SerializationKey defaultKey();
-	} SerializationKey;
+	} serializationKey;
 
 	static const int NOT_CALCULATED = -1;
 
@@ -150,11 +147,11 @@ public:
 	/// Cleans up a tile.
 	~Tile();
 	/// Load the tile from yaml
-	void load(const YAML::Node &node);
+	void load(const YAML::YamlNodeReader& reader);
 	/// Load the tile from binary buffer in memory
 	void loadBinary(Uint8 *buffer, Tile::SerializationKey& serializationKey);
 	/// Saves the tile to yaml
-	YAML::Node save() const;
+	void save(YAML::YamlNodeWriter writer) const;
 	/// Saves the tile to binary
 	void saveBinary(Uint8** buffer) const;
 

@@ -633,8 +633,7 @@ void BattlescapeGenerator::nextStage()
 			{
 				++soldiersTotal;
 				bu->resetTurnsSinceStunned();
-				bu->setTurnsSinceSpotted(255);
-				bu->setTurnsLeftSpottedForSnipers(0);
+				bu->resetTurnsSince();
 				if (!selectedFirstSoldier && bu->getGeoscapeSoldier())
 				{
 					_save->setSelectedUnit(bu);
@@ -1313,7 +1312,7 @@ void BattlescapeGenerator::deployXCOM(const RuleStartingCondition* startingCondi
 		// set all the items on this tile as belonging to the XCOM faction.
 		bi->setXCOMProperty(true);
 		// don't let the soldiers take extra ammo yet
-		if (bi->getRules()->getBattleType() == BT_AMMO)
+		if (bi->getRules()->getBattleType() == BT_AMMO && !Options::oxceAlternateCraftEquipmentManagement)
 			continue;
 		placeItemByLayout(bi, tempItemList);
 	}
@@ -1324,10 +1323,19 @@ void BattlescapeGenerator::deployXCOM(const RuleStartingCondition* startingCondi
 	// refresh list
 	tempItemList = *_craftInventoryTile->getInventory();
 
+	// sort it, so that ammo is loaded in a predictable and moddable manner
+	std::sort(tempItemList.begin(), tempItemList.end(),
+		[](const BattleItem* a, const BattleItem* b)
+		{
+			return a->getRules()->getLoadOrder() < b->getRules()->getLoadOrder();
+		}
+	);
+
 	// load weapons before loadouts take extra clips.
 	loadWeapons(tempItemList);
 
 	// refresh list
+	// (unsorts it again, which is not a problem)
 	tempItemList = *_craftInventoryTile->getInventory();
 
 	for (BattleItem* bi : tempItemList)
@@ -1515,11 +1523,16 @@ BattleUnit *BattlescapeGenerator::addXCOMUnit(BattleUnit *unit)
 	{
 		if (_craft == 0 || !_craftDeployed)
 		{
+			setCustomCraftInventoryTile();
+
 			Node* node = _save->getSpawnNode(NR_XCOM, unit);
 			if (node)
 			{
 				_save->setUnitPosition(unit, node->getPosition());
-				_craftInventoryTile = _save->getTile(node->getPosition());
+				if (!_craftInventoryTile)
+				{
+					_craftInventoryTile = _save->getTile(node->getPosition());
+				}
 				unit->setDirection(RNG::generate(0, 7));
 				_save->getUnits()->push_back(unit);
 				_save->initUnit(unit);
@@ -1529,7 +1542,10 @@ BattleUnit *BattlescapeGenerator::addXCOMUnit(BattleUnit *unit)
 			{
 				if (placeUnitNearFriend(unit))
 				{
-					_craftInventoryTile = _save->getTile(unit->getPosition());
+					if (!_craftInventoryTile)
+					{
+						_craftInventoryTile = _save->getTile(unit->getPosition());
+					}
 					unit->setDirection(RNG::generate(0, 7));
 					_save->getUnits()->push_back(unit);
 					_save->initUnit(unit);
@@ -1622,10 +1638,7 @@ BattleUnit *BattlescapeGenerator::addXCOMUnit(BattleUnit *unit)
 		}
 		else
 		{
-			if (_craft)
-			{
-				setCustomCraftInventoryTile();
-			}
+			setCustomCraftInventoryTile();
 
 			for (int i = 0; i < _mapsize_x * _mapsize_y * _mapsize_z; ++i)
 			{
@@ -1650,7 +1663,7 @@ BattleUnit *BattlescapeGenerator::addXCOMUnit(BattleUnit *unit)
  */
 void BattlescapeGenerator::setCustomCraftInventoryTile()
 {
-	if (_craftInventoryTile == 0)
+	if (_craftInventoryTile == 0 && _craft && _craftDeployed && _craftRules)
 	{
 		// Craft inventory tile position defined in the ruleset
 		const std::vector<int> coords = _craftRules->getCraftInventoryTile();
@@ -1658,6 +1671,16 @@ void BattlescapeGenerator::setCustomCraftInventoryTile()
 		{
 			Position craftInventoryTilePosition = Position(coords[0] + (_craftPos.x * 10), coords[1] + (_craftPos.y * 10), coords[2] + _craftZ);
 			canPlaceXCOMUnit(_save->getTile(craftInventoryTilePosition));
+		}
+	}
+	if (_craftInventoryTile == 0)
+	{
+		// Mapblock inventory tile position defined in the ruleset
+		if (!_backupInventoryTiles.empty())
+		{
+			int pilePick = RNG::generate(0, _backupInventoryTiles.size() - 1);
+			Tile* pileTile = _backupInventoryTiles[pilePick];
+			_craftInventoryTile = pileTile; // no checks
 		}
 	}
 }
@@ -1755,7 +1778,7 @@ void BattlescapeGenerator::deployAliens(const AlienDeployment *deployment)
 
 			std::string alienName = dd.customUnitType.empty() ? race->getMember(dd.alienRank) : dd.customUnitType;
 
-			bool outside = RNG::generate(0,99) < dd.percentageOutsideUfo;
+			bool outside = RNG::percent(dd.percentageOutsideUfo);
 			if (_ufo == 0 && !deployment->getForcePercentageOutsideUfo())
 			{
 				outside = false;
@@ -1859,7 +1882,7 @@ BattleUnit *BattlescapeGenerator::addAlien(Unit *rules, int alienRank, bool outs
 	else
 	{
 		// DEMIGOD DIFFICULTY: screw the player: spawn as many aliens as possible.
-		if (_game->getMod()->isDemigod() && placeUnitNearFriend(unit))
+		if ((_game->getMod()->isDemigod() || Mod::EXTENDED_FORCE_SPAWN) && placeUnitNearFriend(unit))
 		{
 			unit->setRankInt(alienRank);
 			int dir = _save->getTileEngine()->faceWindow(unit->getPosition());
@@ -2277,7 +2300,11 @@ int BattlescapeGenerator::loadMAP(MapBlock *mapblock, int xoff, int yoff, int zo
 					ss << mapblock->getSizeX() << "," << mapblock->getSizeY() << "," << mapblock->getSizeZ() << "]";
 					throw Exception(ss.str());
 				}
-				_save->createItemForTile(rule, _save->getTile(rngItems.position + Position(xoff, yoff, zoff)));
+				BattleItem* newRandItem = _save->createItemForTile(rule, _save->getTile(rngItems.position + Position(xoff, yoff, zoff)));
+				if (rule->getFuseTimerType() != BFT_NONE && rngItems.fuseTimerMin > -1 && rngItems.fuseTimerMax > -1 && rngItems.fuseTimerMin <= rngItems.fuseTimerMax)
+				{
+					newRandItem->setFuseTimer(RNG::generate(rngItems.fuseTimerMin, rngItems.fuseTimerMax));
+				}
 			}
 		}
 	}
@@ -2344,6 +2371,14 @@ int BattlescapeGenerator::loadMAP(MapBlock *mapblock, int xoff, int yoff, int zo
 				}
 			}
 		}
+	}
+
+	if (mapblock->getCraftInventoryTile().size() >= 3)
+	{
+		auto& coords = mapblock->getCraftInventoryTile();
+		Position pilePos = Position(coords[0] + xoff, coords[1] + yoff, coords[2] + zoff);
+		Tile* pileTile = _save->getTile(pilePos);
+		_backupInventoryTiles.push_back(pileTile);
 	}
 
 	return sizez;
@@ -2775,6 +2810,8 @@ void BattlescapeGenerator::loadWeapons(const std::vector<BattleItem*> &itemList)
  */
 void BattlescapeGenerator::generateMap(const std::vector<MapScript*> *script, const std::string &customUfoName, const RuleStartingCondition* startingCondition)
 {
+	_backupInventoryTiles.clear(); // just in case
+
 	// reset ambient sound
 	_save->setAmbientSound(Mod::NO_SOUND);
 	_save->setAmbienceRandom({});

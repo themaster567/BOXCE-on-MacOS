@@ -119,9 +119,12 @@ private:
 	int _smokeMaxHit;
 	int _moraleRestored;
 	BattleUnit *_charging;
-	int _turnsSinceSpotted, _turnsLeftSpottedForSnipers, _turnsSinceStunned, _turnsSinceSeenByHostile, _turnsSinceSeenByNeutral, _turnsSinceSeenByPlayer = 255;
+	int _turnsSinceSeenByHostile, _turnsSinceSeenByNeutral, _turnsSinceSeenByPlayer = 255;
 	int _tileLastSpottedByHostile, _tileLastSpottedByNeutral, _tileLastSpottedByPlayer = -1;
 	int _tileLastSpottedForBlindShotByHostile, _tileLastSpottedForBlindShotByNeutral, _tileLastSpottedForBlindShotByPlayer = -1;
+	Uint8 _turnsSinceSpotted[FACTION_MAX] = { 255, 255, 255 };
+	Uint8 _turnsLeftSpottedForSnipers[FACTION_MAX] = { 0, 0, 0 };
+	Uint8 _turnsSinceStunned = 255;
 	BattleUnit* _previousOwner = nullptr;
 	const Unit *_spawnUnit = nullptr;
 	std::string _activeHand;
@@ -158,12 +161,16 @@ private:
 	std::vector<int> _loftempsSet;
 	Unit *_unitRules;
 	int _rankInt;
+	int _rankIntUnified = 0;
 	int _turretType;
 	int _breathFrame;
 	bool _breathing;
 	bool _hidingForTurn, _floorAbove, _respawn, _alreadyRespawned;
 	bool _isLeeroyJenkins;	// always charges enemy, never retreats.
 	bool _isAggressive;
+	bool _isBrutal;
+	bool _isNotBrutal;
+	bool _isCheatOnMovement;
 	bool _summonedPlayerUnit, _resummonedFakeCivilian;
 	bool _pickUpWeaponsMoreActively;
 	bool _disableIndicators;
@@ -181,6 +188,7 @@ private:
 	bool _capturable;
 	bool _vip;
 	bool _bannedInNextStage;
+	bool _skillMenuCheck;
 	ScriptValues<BattleUnit> _scriptValues;
 
 	/// Calculate stat improvement.
@@ -206,7 +214,7 @@ private:
 	/// Helper function preparing the banned flag.
 	void prepareBannedFlag(const RuleStartingCondition* sc);
 	/// Applies percentual and/or flat adjustments to the use costs.
-	void applyPercentages(RuleItemUseCost &cost, const RuleItemUseCost &flat) const;
+	void applyPercentages(RuleItemUseCost &cost, const RuleItemUseFlat &flat) const;
 public:
 	static const int MAX_SOLDIER_ID = 1000000;
 	static const int BUBBLES_FIRST_FRAME = 3;
@@ -232,9 +240,9 @@ public:
 	/// Cleans up the BattleUnit.
 	~BattleUnit();
 	/// Loads the unit from YAML.
-	void load(const YAML::Node &node, const Mod *mod, const ScriptGlobal *shared);
+	void load(const YAML::YamlNodeReader& reader, const Mod *mod, const ScriptGlobal *shared);
 	/// Saves the unit to YAML.
-	YAML::Node save(const ScriptGlobal *shared) const;
+	void save(YAML::YamlNodeWriter writer, const ScriptGlobal *shared) const;
 	/// Gets the BattleUnit's ID.
 	int getId() const;
 	/// Calculates the distance squared between the unit and a given position.
@@ -462,10 +470,19 @@ public:
 	void setWantToEndTurn(bool wantToEndTurn);
 	/// Asks the unit's AI whether it wants to end the turn or not
 	bool getWantToEndTurn();
+	/// Gets weight value as hostile unit.
+	AIAttackWeight getAITargetWeightAsHostile(const Mod *mod) const;
+	/// Gets weight value as civilian unit when consider by aliens.
+	AIAttackWeight getAITargetWeightAsHostileCivilians(const Mod *mod) const;
+	/// Gets weight value as same faction unit.
+	AIAttackWeight getAITargetWeightAsFriendly(const Mod *mod) const;
+	/// Gets weight value as neutral unit (xcom to civ or vice versa).
+	AIAttackWeight getAITargetWeightAsNeutral(const Mod *mod) const;
 	/// Set whether this unit is visible
 	void setVisible(bool flag);
 	/// Get whether this unit is visible
 	bool getVisible() const;
+
 
 	/// Check if unit can fall down.
 	void updateTileFloorState(SavedBattleGame *saveBattleGame);
@@ -704,12 +721,22 @@ public:
 	/// Get the carried weight in strength units.
 	int getCarriedWeight(BattleItem *draggingItem = 0) const;
 
+	/// Set default state on unit.
+	void resetTurnsSince();
+	/// Update counters on unit.
+	void updateTurnsSince();
 	/// Set how many turns this unit will be exposed for.
-	void setTurnsSinceSpotted (int turns);
+	void setTurnsSinceSpotted(int turns);
+	/// Set how many turns this unit will be exposed for. For specific faction.
+	void setTurnsSinceSpottedByFaction(UnitFaction faction, int turns);
 	/// Set how many turns this unit will be exposed for.
 	int getTurnsSinceSpotted() const;
+	/// Set how many turns this unit will be exposed for. For specific faction.
+	int getTurnsSinceSpottedByFaction(UnitFaction faction) const;
 	/// Set how many turns left snipers know about this target.
 	void setTurnsLeftSpottedForSnipers (int turns);
+	/// Set how many turns left snipers know about this target. For specific faction.
+	void setTurnsLeftSpottedForSnipersByFaction (UnitFaction faction, int turns);
 	/// Get how many turns left snipers know about this target.
 	int  getTurnsLeftSpottedForSnipers() const;
 	/// Set how many turns ago this unit was last seen
@@ -722,6 +749,8 @@ public:
 	void updateEnemyKnowledge(int index, bool clue = false);
 	/// Get the tile where the unit was last spotted
 	int getTileLastSpotted(UnitFaction faction, bool forBlindShot = false) const;
+	/// Get how many turns left snipers know about this target. For specific faction.
+	int  getTurnsLeftSpottedForSnipersByFaction(UnitFaction faction) const;
 	/// Reset how many turns passed since stunned last time.
 	void resetTurnsSinceStunned() { _turnsSinceStunned = 255; }
 	/// Increase how many turns passed since stunned last time.
@@ -742,8 +771,14 @@ public:
 	void setRankInt(int rank);
 	/// get the rank integer
 	int getRankInt() const;
+	/// get the rank unified integer
+	int getRankIntUnified() const { return _rankIntUnified; };
 	/// derive a rank integer based on rank string (for xcom soldiers ONLY)
-	void deriveRank();
+	void deriveSoldierRank();
+	/// derive a rank integer based on rank string (for Alien)
+	void deriveHostileRank();
+	/// derive a rank integer based on rank string (for Civilians)
+	void deriveNeutralRank();
 	/// this function checks if a tile is visible, using maths.
 	bool checkViewSector(Position pos, bool useTurretDirection = false) const;
 	/// adjust this unit's stats according to difficulty.
@@ -882,6 +917,8 @@ public:
 	bool isBannedInNextStage() const { return _bannedInNextStage; }
 	/// Checks whether the unit is controlled by the AI or not
 	bool isAIControlled() const;
+	/// Is at least one soldier skill usable? (i.e. shown in the skill menu)
+	bool skillMenuCheck() const { return _skillMenuCheck; }
 	/// Is the unit eagerly picking up weapons?
 	bool getPickUpWeaponsMoreActively() const { return _pickUpWeaponsMoreActively; }
 	/// Is the unit afraid to pathfind through fire?

@@ -587,7 +587,7 @@ PathfindingStep Pathfinding::getTUCost(Position startPosition, int direction, co
 				{
 					return {{INVALID_MOVE_COST, 0}}; // consider any tile occupied by a friendly as being blocked
 				}
-				else if (unit->getUnitRules() && unitHere->getTurnsSinceSpotted() <= unit->getUnitRules()->getIntelligence())
+				else if (unit->getUnitRules() && unitHere->getTurnsSinceSpottedByFaction(unit->getFaction()) <= unit->getUnitRules()->getIntelligence())
 				{
 					return {{INVALID_MOVE_COST, 0}}; // consider any tile occupied by a known unit that isn't our target as being blocked
 				}
@@ -1256,9 +1256,9 @@ void Pathfinding::refreshPath()
 		_save->getBattleGame()->setTUReserved(BA_AUTOSHOT);
 	}
 
-	const bool running = _ctrlUsed && _unit->getArmor()->allowsRunning(_unit->isSmallUnit()) && _path.size() > 1;
-	const bool strafing = _ctrlUsed && _unit->getArmor()->allowsStrafing(_unit->isSmallUnit()) && _path.size() == 1;
-	const bool sneaking = _altUsed && _unit->getArmor()->allowsSneaking(_unit->isSmallUnit());
+	const bool running = _ctrlUsed && _unit->getArmor()->allowsRunning(_unit->isSmallUnit()) && (_path.size() > 1 || _altUsed);
+	const bool strafing = !running && _ctrlUsed && _unit->getArmor()->allowsStrafing(_unit->isSmallUnit()) && _path.size() == 1;
+	const bool sneaking = !running && _altUsed && _unit->getArmor()->allowsSneaking(_unit->isSmallUnit());
 
 	const auto bam = strafing ? BAM_STRAFE : running ? BAM_RUN : sneaking ? BAM_SNEAK : BAM_NORMAL;
 	const auto movementType = getMovementType(_unit, nullptr, bam); //preview always for unit not missiles

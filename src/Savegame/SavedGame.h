@@ -31,6 +31,7 @@
 #include "../Mod/RuleBaseFacility.h"
 #include "../Mod/RuleCraft.h"
 #include "../Engine/Script.h"
+#include "ResearchDiary.h"
 
 namespace OpenXcom
 {
@@ -74,7 +75,7 @@ enum GameDifficulty : int { DIFF_BEGINNER = 0, DIFF_EXPERIENCED, DIFF_VETERAN, D
 /**
  * Enumerator for the various save types.
  */
-enum SaveType { SAVE_DEFAULT, SAVE_QUICK, SAVE_AUTO_GEOSCAPE, SAVE_AUTO_BATTLESCAPE, SAVE_IRONMAN, SAVE_IRONMAN_END };
+enum SaveType { SAVE_DEFAULT, SAVE_INSTA, SAVE_QUICK, SAVE_AUTO_GEOSCAPE, SAVE_AUTO_BATTLESCAPE, SAVE_IRONMAN, SAVE_IRONMAN_END };
 
 /**
  * Enumerator for the current game ending.
@@ -141,6 +142,7 @@ private:
 	AlienStrategy *_alienStrategy;
 	SavedBattleGame *_battleGame;
 	std::vector<const RuleResearch*> _discovered;
+	std::vector<ResearchDiaryEntry*> _researchDiary;
 	std::map<std::string, int> _generatedEvents;
 	std::map<std::string, int> _ufopediaRuleStatus;
 	std::map<std::string, int> _manufactureRuleStatus;
@@ -190,8 +192,8 @@ public:
 	static std::vector<SaveInfo> getList(Language *lang, bool autoquick);
 	/// Loads a saved game from YAML.
 	void load(const std::string &filename, Mod *mod, Language *lang);
-	void loadTemplates(const YAML::Node& doc, const Mod* mod);
-	void loadUfopediaRuleStatus(const YAML::Node& node);
+	void loadTemplates(const YAML::YamlNodeReader& reader, const Mod* mod);
+	void loadUfopediaRuleStatus(const YAML::YamlNodeReader& reader);
 	/// Saves a saved game to YAML.
 	void save(const std::string &filename, Mod *mod) const;
 	/// Gets the game name.
@@ -294,10 +296,14 @@ public:
 	const RuleResearch* selectGetOneFree(const RuleResearch* research);
 	/// Remove a research from the "already discovered" list
 	void removeDiscoveredResearch(const RuleResearch *research);
-	/// Add a finished ResearchProject
-	void addFinishedResearchSimple(const RuleResearch *research);
+	/// Make all research discovered (used in New Battle)
+	void makeAllResearchDiscovered(const Mod* mod);
 	/// Add a finished ResearchProject
 	void addFinishedResearch(const RuleResearch *research, const Mod *mod, Base *base, bool score = true);
+	/// Add a new record to the research diary
+	void addResearchDiaryEntry(ResearchDiaryEntry* entry);
+	/// Gets the research diary.
+	const std::vector<ResearchDiaryEntry*> & getResearchDiary() const { return _researchDiary; }
 	/// Get the list of already discovered research projects
 	const std::vector<const RuleResearch*> & getDiscoveredResearch() const;
 	/// Get the list of ResearchProject which can be researched in a Base
@@ -521,7 +527,7 @@ public:
 	/// Checks if an instant Geoscape event can be spawned.
 	bool canSpawnInstantEvent(const RuleEvent* eventRules);
 	/// Handles research unlocked by successful/failed missions and despawned mission sites.
-	bool handleResearchUnlockedByMissions(const RuleResearch* research, const Mod* mod);
+	bool handleResearchUnlockedByMissions(const RuleResearch* research, const Mod* mod, const AlienDeployment* deployment);
 	/// Handles research side effects for primary research sources.
 	void handlePrimaryResearchSideEffects(const std::vector<const RuleResearch*> &topicsToCheck, const Mod* mod, Base* base);
 	/// Gets the list of user notes.

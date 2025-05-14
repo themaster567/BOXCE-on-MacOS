@@ -18,7 +18,6 @@
  */
 #include "Tile.h"
 #include <algorithm>
-#include <cassert>
 #include "../Mod/MapData.h"
 #include "../Mod/MapDataSet.h"
 #include "../Engine/SurfaceSet.h"
@@ -37,21 +36,19 @@
 namespace OpenXcom
 {
 
-const Tile::SerializationKey Tile::SerializationKey::defaultKey() {
-	return {
-		4, // index
-		2, // _mapDataSetID
-		2, // _mapDataID: four of these
-		1, // _smoke
-		1, // _fire
-		1, // boolFields: 8-bit bool field
-		2, // _lastExploredByHostile
-		2, // _lastExploredByNeutral
-		2, // _lastExploredByPlayer
-		4 + 2*4 + 2*4 + 1 + 1 + 1 + 2 + 2 + 2, // totalBytes
+	Tile::SerializationKey Tile::serializationKey =
+	{
+		4,                                         // index
+		2,                                         // _mapDataSetID
+		2,                                         // _mapDataID: four of these
+		1,                                         // _smoke
+		1,                                         // _fire
+		1,                                         // boolFields: 8-bit bool field
+		2,                                         // _lastExploredByHostile
+		2,                                         // _lastExploredByNeutral
+		2,                                         // _lastExploredByPlayer
+		4 + 2 * 4 + 2 * 4 + 1 + 1 + 1 + 2 + 2 + 2, // totalBytes
 	};
-}
-
 /**
  * constructor
  * @param pos Position.
@@ -92,35 +89,30 @@ Tile::~Tile()
  * Load the tile from a YAML node.
  * @param node YAML node.
  */
-void Tile::load(const YAML::Node &node)
+void Tile::load(const YAML::YamlNodeReader& reader)
 {
-	//_position = node["position"].as<Position>(_position);
+	//reader.tryRead("position", _position);
 	for (int i = 0; i < 4; i++)
 	{
-		_mapData->ID[i] = node["mapDataID"][i].as<int>(_mapData->ID[i]);
-		_mapData->SetID[i] = node["mapDataSetID"][i].as<int>(_mapData->SetID[i]);
+		reader["mapDataID"][i].tryReadVal(_mapData->ID[i]);
+		reader["mapDataSetID"][i].tryReadVal(_mapData->SetID[i]);
 	}
-	_fire = node["fire"].as<int>(_fire);
-	_smoke = node["smoke"].as<int>(_smoke);
+	reader.tryRead("fire", _fire);
+	reader.tryRead("smoke", _smoke);
 
-	const Tile::SerializationKey def = Tile::SerializationKey::defaultKey();
-	_lastExploredByHostile = node["lastExploredByHostile"].as<int>(def._lastExploredByHostile);
-	_lastExploredByNeutral = node["lastExploredByNeutral"].as<int>(def._lastExploredByNeutral);
-	_lastExploredByPlayer = node["lastExploredByPlayer"].as<int>(def._lastExploredByPlayer);
-
-	if (node["discovered"])
+	if (const auto& discovered = reader["discovered"])
 	{
 		for (int i = 0; i < 3; i++)
 		{
-			auto realTilePart = (i == 2 ? 0 : i - 1); //convert old convention to new one
-			_objectsCache[realTilePart].discovered = (Uint8)node["discovered"][i].as<bool>();
+			int realTilePart = (i == 2 ? 0 : i - 1); //convert old convention to new one
+			_objectsCache[realTilePart].discovered = (Uint8)discovered[i].readVal<bool>();
 		}
 	}
-	if (node["openDoorWest"])
+	if (reader["openDoorWest"])
 	{
 		_objectsCache[1].currentFrame = 7;
 	}
-	if (node["openDoorNorth"])
+	if (reader["openDoorNorth"])
 	{
 		_objectsCache[2].currentFrame = 7;
 	}
@@ -155,9 +147,12 @@ void Tile::loadBinary(Uint8 *buffer, Tile::SerializationKey& serKey)
 	_objectsCache[O_FLOOR].discovered = (boolFields & 4) ? 1 : 0;
 	_objectsCache[O_WESTWALL].currentFrame = (boolFields & 8) ? 7 : 0;
 	_objectsCache[O_NORTHWALL].currentFrame = (boolFields & 0x10) ? 7 : 0;
-	_lastExploredByHostile = unserializeInt(&buffer, serKey._lastExploredByHostile);
-	_lastExploredByNeutral = unserializeInt(&buffer, serKey._lastExploredByNeutral);
-	_lastExploredByPlayer = unserializeInt(&buffer, serKey._lastExploredByPlayer);
+	if (serKey._lastExploredByHostile != 0)
+		_lastExploredByHostile = unserializeInt(&buffer, serKey._lastExploredByHostile);
+	if (serKey._lastExploredByNeutral != 0)
+		_lastExploredByNeutral = unserializeInt(&buffer, serKey._lastExploredByNeutral);
+	if (serKey._lastExploredByPlayer != 0)
+		_lastExploredByPlayer = unserializeInt(&buffer, serKey._lastExploredByPlayer);
 	if (_fire || _smoke)
 	{
 		_animationOffset = RNG::seedless(0, 3);
@@ -169,25 +164,25 @@ void Tile::loadBinary(Uint8 *buffer, Tile::SerializationKey& serKey)
  * Saves the tile to a YAML node.
  * @return YAML node.
  */
-YAML::Node Tile::save() const
+void Tile::save(YAML::YamlNodeWriter writer) const
 {
-	YAML::Node node;
-	node["position"] = _pos;
-	for (int i = 0; i < 4; i++)
-	{
-		node["mapDataID"].push_back(_mapData->ID[i]);
-		node["mapDataSetID"].push_back(_mapData->SetID[i]);
-	}
+	writer.setAsMap();
+	writer.write("position", _pos);
+	std::vector<int> ids(std::begin(_mapData->ID), std::end(_mapData->ID));
+	std::vector<int> setIds(std::begin(_mapData->SetID), std::end(_mapData->SetID));
+	writer.write("mapDataID", ids);
+	writer.write("mapDataSetID", setIds);
 	if (_smoke)
-		node["smoke"] = _smoke;
+		writer.write("smoke", _smoke);
 	if (_fire)
-		node["fire"] = _fire;
+		writer.write("fire", _fire);
 	if (_lastExploredByHostile)
-		node["lastExploredByHostile"] = _lastExploredByHostile;
+		writer.write("lastExploredByHostile", _lastExploredByHostile);
 	if (_lastExploredByNeutral)
-		node["lastExploredByNeutral"] = _lastExploredByNeutral;
+		writer.write("lastExploredByNeutral", _lastExploredByNeutral);
 	if (_lastExploredByPlayer)
-		node["lastExploredByPlayer"] = _lastExploredByPlayer;
+		writer.write("lastExploredByPlayer", _lastExploredByPlayer);
+
 	if (_objectsCache[O_FLOOR].discovered || _objectsCache[O_WESTWALL].discovered || _objectsCache[O_NORTHWALL].discovered)
 	{
 		throw Exception("Obsolete code");
@@ -198,13 +193,12 @@ YAML::Node Tile::save() const
 	}
 	if (isUfoDoorOpen(O_WESTWALL))
 	{
-		node["openDoorWest"] = true;
+		writer.write("openDoorWest", true);
 	}
 	if (isUfoDoorOpen(O_NORTHWALL))
 	{
-		node["openDoorNorth"] = true;
+		writer.write("openDoorNorth", true);
 	}
-	return node;
 }
 
 /**
@@ -213,27 +207,25 @@ YAML::Node Tile::save() const
  */
 void Tile::saveBinary(Uint8** buffer) const
 {
-	const Tile::SerializationKey def = Tile::SerializationKey::defaultKey();
+	serializeInt(buffer, serializationKey._mapDataID, _mapData->ID[0]);
+	serializeInt(buffer, serializationKey._mapDataID, _mapData->ID[1]);
+	serializeInt(buffer, serializationKey._mapDataID, _mapData->ID[2]);
+	serializeInt(buffer, serializationKey._mapDataID, _mapData->ID[3]);
+	serializeInt(buffer, serializationKey._mapDataSetID, _mapData->SetID[0]);
+	serializeInt(buffer, serializationKey._mapDataSetID, _mapData->SetID[1]);
+	serializeInt(buffer, serializationKey._mapDataSetID, _mapData->SetID[2]);
+	serializeInt(buffer, serializationKey._mapDataSetID, _mapData->SetID[3]);
 
-	serializeInt(buffer, def._mapDataID, _mapData->ID[0]);
-	serializeInt(buffer, def._mapDataID, _mapData->ID[1]);
-	serializeInt(buffer, def._mapDataID, _mapData->ID[2]);
-	serializeInt(buffer, def._mapDataID, _mapData->ID[3]);
-	serializeInt(buffer, def._mapDataSetID, _mapData->SetID[0]);
-	serializeInt(buffer, def._mapDataSetID, _mapData->SetID[1]);
-	serializeInt(buffer, def._mapDataSetID, _mapData->SetID[2]);
-	serializeInt(buffer, def._mapDataSetID, _mapData->SetID[3]);
-
-	serializeInt(buffer, def._smoke, _smoke);
-	serializeInt(buffer, def._fire, _fire);
+	serializeInt(buffer, serializationKey._smoke, _smoke);
+	serializeInt(buffer, serializationKey._fire, _fire);
 
 	Uint8 boolFields = (_objectsCache[O_WESTWALL].discovered?1:0) + (_objectsCache[O_NORTHWALL].discovered?2:0) + (_objectsCache[O_FLOOR].discovered?4:0);
 	boolFields |= isUfoDoorOpen(O_WESTWALL) ? 8 : 0; // west
 	boolFields |= isUfoDoorOpen(O_NORTHWALL) ? 0x10 : 0; // north?
-	serializeInt(buffer, def.boolFields, boolFields);
-	serializeInt(buffer, def._lastExploredByHostile, _lastExploredByHostile);
-	serializeInt(buffer, def._lastExploredByNeutral, _lastExploredByNeutral);
-	serializeInt(buffer, def._lastExploredByPlayer, _lastExploredByPlayer);
+	serializeInt(buffer, serializationKey.boolFields, boolFields);
+	serializeInt(buffer, serializationKey._lastExploredByHostile, _lastExploredByHostile);
+	serializeInt(buffer, serializationKey._lastExploredByNeutral, _lastExploredByNeutral);
+	serializeInt(buffer, serializationKey._lastExploredByPlayer, _lastExploredByPlayer);
 }
 
 /**
@@ -898,7 +890,7 @@ BattleItem* Tile::getTopItem()
 		return _inventory.front();
 	}
 
-	int biggestWeight = -1;
+	int biggestWeight = -999;
 	BattleItem* biggestItem = 0;
 	for (auto* bi : _inventory)
 	{

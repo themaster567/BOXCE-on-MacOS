@@ -69,13 +69,13 @@ BattleUnit::BattleUnit(const Mod *mod, Soldier *soldier, int depth, const RuleSt
 	_dontReselect(false), _fire(0), _currentAIState(0), _visible(false),
 	_exp{ }, _expTmp{ },
 	_motionPoints(0), _scannedTurn(-1), _customMarker(0), _kills(0), _hitByFire(false), _hitByAnything(false), _alreadyExploded(false), _fireMaxHit(0), _smokeMaxHit(0), 
-	_moraleRestored(0), _charging(0), _turnsSinceSpotted(255), _turnsLeftSpottedForSnipers(0),
+	_moraleRestored(0), _charging(0),
 	_turnsSinceSeenByHostile(255), _turnsSinceSeenByNeutral(255), _turnsSinceSeenByPlayer(255),
 	_tileLastSpottedByHostile(-1), _tileLastSpottedByNeutral(-1), _tileLastSpottedByPlayer(-1), _tileLastSpottedForBlindShotByHostile(-1), _tileLastSpottedForBlindShotByNeutral(-1), _tileLastSpottedForBlindShotByPlayer(-1),
 	_statistics(), _murdererId(0), _mindControllerID(0), _fatalShotSide(SIDE_FRONT), _fatalShotBodyPart(BODYPART_HEAD), _armor(0),
 	_geoscapeSoldier(soldier), _unitRules(0), _rankInt(0), _turretType(-1), _hidingForTurn(false), _floorAbove(false), _respawn(false), _alreadyRespawned(false),
 	_isLeeroyJenkins(false), _summonedPlayerUnit(false), _resummonedFakeCivilian(false), _pickUpWeaponsMoreActively(false), _disableIndicators(false),
-	_capturable(true), _vip(false), _bannedInNextStage(false)
+	_capturable(true), _vip(false), _bannedInNextStage(false), _skillMenuCheck(false)
 {
 	_name = soldier->getName(true);
 	_id = soldier->getId();
@@ -115,11 +115,26 @@ BattleUnit::BattleUnit(const Mod *mod, Soldier *soldier, int depth, const RuleSt
 
 	_statistics = new BattleUnitStatistics();
 
-	deriveRank();
+	deriveSoldierRank();
 
 	_allowAutoCombat = soldier->getAllowAutoCombat();
 
 	updateArmorFromSoldier(mod, soldier, soldier->getArmor(), depth, false, sc);
+
+	// soldier bonus cache was built above in updateArmorFromSoldier(), so we can also calculate this now
+	if (_geoscapeSoldier)
+	{
+		for (auto* skill : _geoscapeSoldier->getRules()->getSkills())
+		{
+			if (_geoscapeSoldier->hasAllRequiredBonusesForSkill(skill)
+				&& (skill->getCost().Time > 0 || skill->getCost().Mana > 0)
+				&& (!skill->isPsiRequired() || getBaseStats()->psiSkill > 0))
+			{
+				_skillMenuCheck = true;
+				break;
+			}
+		}
+	}
 }
 
 /**
@@ -234,7 +249,7 @@ void BattleUnit::updateArmorFromSoldier(const Mod *mod, Soldier *soldier, Armor 
 	}
 
 	int look = soldier->getGender() + 2 * soldier->getLook() + 8 * soldier->getLookVariant();
-	setRecolor(look, look, _rankInt);
+	setRecolor(look, look, _rankIntUnified);
 
 	prepareUnitSounds();
 	prepareUnitResponseSounds(mod);
@@ -406,7 +421,7 @@ BattleUnit::BattleUnit(const Mod *mod, Unit *unit, UnitFaction faction, int id, 
 	_allowAutoCombat(true), 
 	_visible(false), _exp{ }, _expTmp{ }, 
 	_motionPoints(0), _scannedTurn(-1), _customMarker(0), _kills(0), _hitByFire(false), _hitByAnything(false), _alreadyExploded(false), _fireMaxHit(0),	_smokeMaxHit(0), 
-	_moraleRestored(0), _charging(0), _turnsSinceSpotted(255), _turnsLeftSpottedForSnipers(0), 
+	_moraleRestored(0), _charging(0), 
 	_turnsSinceSeenByHostile(255), _turnsSinceSeenByNeutral(255),
 	_turnsSinceSeenByPlayer(255), _tileLastSpottedByHostile(-1), _tileLastSpottedByNeutral(-1), _tileLastSpottedByPlayer(-1), 
 	_tileLastSpottedForBlindShotByHostile(-1), _tileLastSpottedForBlindShotByNeutral(-1),	_tileLastSpottedForBlindShotByPlayer(-1), 
@@ -414,7 +429,7 @@ BattleUnit::BattleUnit(const Mod *mod, Unit *unit, UnitFaction faction, int id, 
 	_fatalShotBodyPart(BODYPART_HEAD), _armor(armor),  _geoscapeSoldier(0),	_unitRules(unit), 
 	_rankInt(0), _turretType(-1), _hidingForTurn(false), _respawn(false), _alreadyRespawned(false), 
 	_isLeeroyJenkins(false), _summonedPlayerUnit(false), _resummonedFakeCivilian(false), _pickUpWeaponsMoreActively(false),	_disableIndicators(false), 
-	_vip(false), _bannedInNextStage(false)
+	_vip(false), _bannedInNextStage(false), _skillMenuCheck(false)
 {
 	if (enviro)
 	{
@@ -468,6 +483,15 @@ BattleUnit::BattleUnit(const Mod *mod, Unit *unit, UnitFaction faction, int id, 
 	lastCover = TileEngine::invalid;
 
 	_statistics = new BattleUnitStatistics();
+
+	if (_originalFaction == FACTION_HOSTILE)
+	{
+		deriveHostileRank();
+	}
+	else if (_originalFaction == FACTION_NEUTRAL)
+	{
+		deriveNeutralRank();
+	}
 
 	updateArmorFromNonSoldier(mod, _armor, depth, false, sc);
 
@@ -573,35 +597,7 @@ void BattleUnit::updateArmorFromNonSoldier(const Mod* mod, Armor* newArmor, int 
 		_stunlevel = 0;
 	}
 
-	int generalRank = 0;
-	if (_originalFaction == FACTION_HOSTILE)
-	{
-		const int max = 7;
-		const char* rankList[max] =
-		{
-			"STR_LIVE_SOLDIER",
-			"STR_LIVE_ENGINEER",
-			"STR_LIVE_MEDIC",
-			"STR_LIVE_NAVIGATOR",
-			"STR_LIVE_LEADER",
-			"STR_LIVE_COMMANDER",
-			"STR_LIVE_TERRORIST",
-		};
-		for (int i = 0; i < max; ++i)
-		{
-			if (_rank.compare(rankList[i]) == 0)
-			{
-				generalRank = i;
-				break;
-			}
-		}
-	}
-	else if (_originalFaction == FACTION_NEUTRAL)
-	{
-		generalRank = RNG::seedless(0, 7);
-	}
-
-	setRecolor(RNG::seedless(0, 127), RNG::seedless(0, 127), generalRank);
+	setRecolor(RNG::seedless(0, 127), RNG::seedless(0, 127), _rankIntUnified);
 
 	prepareUnitSounds();
 	prepareUnitResponseSounds(mod);
@@ -626,287 +622,288 @@ BattleUnit::~BattleUnit()
  * Loads the unit from a YAML file.
  * @param node YAML node.
  */
-void BattleUnit::load(const YAML::Node &node, const Mod *mod, const ScriptGlobal *shared)
+void BattleUnit::load(const YAML::YamlNodeReader& node, const Mod *mod, const ScriptGlobal *shared)
 {
-	_id = node["id"].as<int>(_id);
-	_faction = (UnitFaction)node["faction"].as<int>(_faction);
-	_status = (UnitStatus)node["status"].as<int>(_status);
-	_wantsToSurrender = node["wantsToSurrender"].as<bool>(_wantsToSurrender);
-	_hasPanickedLastTurn = node["hasPanickedLastTurn"].as<bool>(_hasPanickedLastTurn);
-	_isSurrendering = node["isSurrendering"].as<bool>(_isSurrendering);
-	_pos = node["position"].as<Position>(_pos);
-	_direction = _toDirection = node["direction"].as<int>(_direction);
-	_directionTurret = _toDirectionTurret = node["directionTurret"].as<int>(_directionTurret);
-	_tu = node["tu"].as<int>(_tu);
-	_health = node["health"].as<int>(_health);
-	_mana = node["mana"].as<int>(_mana);
-	_stunlevel = node["stunlevel"].as<int>(_stunlevel);
-	_energy = node["energy"].as<int>(_energy);
-	_morale = node["morale"].as<int>(_morale);
-	_kneeled = node["kneeled"].as<bool>(_kneeled);
-	_floating = node["floating"].as<bool>(_floating);
-	for (int i=0; i < SIDE_MAX; i++)
-		_currentArmor[i] = node["armor"][i].as<int>(_currentArmor[i]);
-	for (int i=0; i < BODYPART_MAX; i++)
-		_fatalWounds[i] = node["fatalWounds"][i].as<int>(_fatalWounds[i]);
-	_fire = node["fire"].as<int>(_fire);
-	_exp.bravery = node["expBravery"].as<int>(_exp.bravery);
-	_exp.reactions = node["expReactions"].as<int>(_exp.reactions);
-	_exp.firing = node["expFiring"].as<int>(_exp.firing);
-	_exp.throwing = node["expThrowing"].as<int>(_exp.throwing);
-	_exp.psiSkill = node["expPsiSkill"].as<int>(_exp.psiSkill);
-	_exp.psiStrength = node["expPsiStrength"].as<int>(_exp.psiStrength);
-	_exp.mana = node["expMana"].as<int>(_exp.mana);
-	_exp.melee = node["expMelee"].as<int>(_exp.melee);
-	_stats = node["currStats"].as<UnitStats>(_stats);
-	_turretType = node["turretType"].as<int>(_turretType);
-	_visible = node["visible"].as<bool>(_visible);
-	_turnsSinceSpotted = node["turnsSinceSpotted"].as<int>(_turnsSinceSpotted);
-	_tileLastSpottedByHostile = node["tileLastSpottedByHostile"].as<int>(_tileLastSpottedByHostile);
-	_tileLastSpottedByNeutral = node["tileLastSpottedByNeutral"].as<int>(_tileLastSpottedByNeutral);
-	_tileLastSpottedByPlayer = node["tileLastSpottedByPlayer"].as<int>(_tileLastSpottedByPlayer);
-	_tileLastSpottedForBlindShotByHostile = node["tileLastSpottedForBlindShotByHostile"].as<int>(_tileLastSpottedForBlindShotByHostile);
-	_tileLastSpottedForBlindShotByNeutral = node["tileLastSpottedForBlindShotByNeutral"].as<int>(_tileLastSpottedForBlindShotByNeutral);
-	_tileLastSpottedForBlindShotByPlayer = node["tileLastSpottedForBlindShotByPlayer"].as<int>(_tileLastSpottedForBlindShotByPlayer);
-	_turnsLeftSpottedForSnipers = node["turnsLeftSpottedForSnipers"].as<int>(_turnsLeftSpottedForSnipers);
-	_turnsSinceSeenByHostile = node["turnsSinceSeenByHostile"].as<int>(_turnsSinceSeenByHostile);
-	_turnsSinceSeenByNeutral = node["turnsSinceSeenByNeutral"].as<int>(_turnsSinceSeenByNeutral);
-	_turnsSinceSeenByPlayer = node["turnsSinceSeenByPlayer"].as<int>(_turnsSinceSeenByPlayer);
-	_turnsSinceStunned = node["turnsSinceStunned"].as<int>(_turnsSinceStunned);
-	_killedBy = (UnitFaction)node["killedBy"].as<int>(_killedBy);
-	_moraleRestored = node["moraleRestored"].as<int>(_moraleRestored);
-	_rankInt = node["rankInt"].as<int>(_rankInt);
-	_kills = node["kills"].as<int>(_kills);
-	_dontReselect = node["dontReselect"].as<bool>(_dontReselect);
+	const auto& reader = node.useIndex();
+	reader.tryRead("id", _id);
+	reader.tryRead("faction", _faction);
+	reader.tryRead("status", _status);
+	reader.tryRead("wantsToSurrender", _wantsToSurrender);
+	reader.tryRead("isSurrendering", _isSurrendering);
+	reader.tryRead("position", _pos);
+	reader.tryRead("direction", _direction);
+	_toDirection = _direction;
+	reader.tryRead("directionTurret", _directionTurret);
+	_toDirectionTurret = _directionTurret;
+	reader.tryRead("tu", _tu);
+	reader.tryRead("health", _health);
+	reader.tryRead("mana", _mana);
+	reader.tryRead("stunlevel", _stunlevel);
+	reader.tryRead("energy", _energy);
+	reader.tryRead("morale", _morale);
+	reader.tryRead("kneeled", _kneeled);
+	reader.tryRead("floating", _floating);
+
+	for (int i = 0; i < SIDE_MAX; i++)
+		reader["armor"][i].tryReadVal(_currentArmor[i]);
+
+	for (int i = 0; i < BODYPART_MAX; i++)
+		reader["fatalWounds"][i].tryReadVal(_fatalWounds[i]);
+
+	reader.tryRead("fire", _fire);
+	reader.tryRead("expBravery", _exp.bravery);
+	reader.tryRead("expReactions", _exp.reactions);
+	reader.tryRead("expFiring", _exp.firing);
+	reader.tryRead("expThrowing", _exp.throwing);
+	reader.tryRead("expPsiSkill", _exp.psiSkill);
+	reader.tryRead("expPsiStrength", _exp.psiStrength);
+	reader.tryRead("expMana", _exp.mana);
+	reader.tryRead("expMelee", _exp.melee);
+	reader.tryRead("currStats", _stats);
+	reader.tryRead("turretType", _turretType);
+	reader.tryRead("visible", _visible);
+
+	reader.tryReadAs<int>("turnsSinceSpotted", _turnsSinceSpotted[FACTION_HOSTILE]);
+	reader.tryReadAs<int>("turnsLeftSpottedForSnipers", _turnsLeftSpottedForSnipers[FACTION_HOSTILE]);
+	reader.tryReadAs<int>("turnsSinceSpottedByXcom", _turnsSinceSpotted[FACTION_PLAYER]);
+	reader.tryReadAs<int>("turnsLeftSpottedForSnipersByXcom", _turnsLeftSpottedForSnipers[FACTION_PLAYER]);
+	reader.tryReadAs<int>("turnsSinceSpottedByCivilian", _turnsSinceSpotted[FACTION_NEUTRAL]);
+	reader.tryReadAs<int>("turnsLeftSpottedForSnipersByCivilian", _turnsLeftSpottedForSnipers[FACTION_NEUTRAL]);
+	reader.tryReadAs<int>("turnsSinceStunned", _turnsSinceStunned);
+
+	reader.tryRead("rankInt", _rankInt);
+	reader.tryRead("rankIntUnified", _rankIntUnified);
+	reader.tryRead("moraleRestored", _moraleRestored);
+	reader.tryRead("killedBy", _killedBy);
+	reader.tryRead("kills", _kills);
+	reader.tryRead("dontReselect", _dontReselect);
+
+	// Custom additions
+	reader.tryRead("isBrutal", _isBrutal);
+	reader.tryRead("isNotBrutal", _isNotBrutal);
+	reader.tryRead("isCheatOnMovement", _isCheatOnMovement);
+
 	_charging = 0;
-
-	if (const YAML::Node& spawn = node["spawnUnit"])
+	if ((_spawnUnit = mod->getUnit(reader["spawnUnit"].readVal<std::string>(""), false))) // ignore bugged types
 	{
-		_spawnUnit = mod->getUnit(spawn.as<std::string>(), false); //ignored bugged types
-		if (_spawnUnit)
-		{
-			_respawn = node["respawn"].as<bool>(_respawn);
-			_spawnUnitFaction = (UnitFaction)node["spawnUnitFaction"].as<int>(_spawnUnitFaction);
-		}
+		reader.tryRead("respawn", _respawn);
+		reader.tryRead("spawnUnitFaction", _spawnUnitFaction);
 	}
+	reader.tryRead("motionPoints", _motionPoints);
+	reader.tryRead("customMarker", _customMarker);
+	reader.tryRead("alreadyRespawned", _alreadyRespawned);
+	reader.tryRead("activeHand", _activeHand);
+	reader.tryRead("preferredHandForReactions", _preferredHandForReactions);
+	reader.tryRead("reactionsDisabledForLeftHand", _reactionsDisabledForLeftHand);
+	reader.tryRead("reactionsDisabledForRightHand", _reactionsDisabledForRightHand);
+	if (reader["tempUnitStatistics"])
+		_statistics->load(reader["tempUnitStatistics"]);
+	reader.tryRead("murdererId", _murdererId);
+	reader.tryRead("fatalShotSide", _fatalShotSide);
+	reader.tryRead("fatalShotBodyPart", _fatalShotBodyPart);
+	reader.tryRead("murdererWeapon", _murdererWeapon);
+	reader.tryRead("murdererWeaponAmmo", _murdererWeaponAmmo);
 
-	_motionPoints = node["motionPoints"].as<int>(0);
-	_customMarker = node["customMarker"].as<int>(0);
-	_alreadyRespawned = node["alreadyRespawned"].as<bool>(_alreadyRespawned);
-	_activeHand = node["activeHand"].as<std::string>(_activeHand);
-	_preferredHandForReactions = node["preferredHandForReactions"].as<std::string>(_preferredHandForReactions);
-	_reactionsDisabledForLeftHand = node["reactionsDisabledForLeftHand"].as<bool>(_reactionsDisabledForLeftHand);
-	_reactionsDisabledForRightHand = node["reactionsDisabledForRightHand"].as<bool>(_reactionsDisabledForRightHand);
-	if (node["tempUnitStatistics"])
-	{
-		_statistics->load(node["tempUnitStatistics"]);
-	}
-	_murdererId = node["murdererId"].as<int>(_murdererId);
-	_fatalShotSide = (UnitSide)node["fatalShotSide"].as<int>(_fatalShotSide);
-	_fatalShotBodyPart = (UnitBodyPart)node["fatalShotBodyPart"].as<int>(_fatalShotBodyPart);
-	_murdererWeapon = node["murdererWeapon"].as<std::string>(_murdererWeapon);
-	_murdererWeaponAmmo = node["murdererWeaponAmmo"].as<std::string>(_murdererWeaponAmmo);
-
-	if (const YAML::Node& p = node["recolor"])
+	if (const auto& recolor = reader["recolor"])
 	{
 		_recolor.clear();
-		for (size_t i = 0; i < p.size(); ++i)
-		{
-			_recolor.push_back(std::make_pair(p[i][0].as<int>(), p[i][1].as<int>()));
-		}
+		for (size_t i = 0; i < recolor.childrenCount(); ++i)
+			_recolor.push_back(std::make_pair(recolor[i][0].readVal<Uint8>(), recolor[i][1].readVal<Uint8>()));
 	}
-	_mindControllerID = node["mindControllerID"].as<int>(_mindControllerID);
-	_summonedPlayerUnit = node["summonedPlayerUnit"].as<bool>(_summonedPlayerUnit);
-	_resummonedFakeCivilian = node["resummonedFakeCivilian"].as<bool>(_resummonedFakeCivilian);
-	_pickUpWeaponsMoreActively = node["pickUpWeaponsMoreActively"].as<bool>(_pickUpWeaponsMoreActively);
-	_disableIndicators = node["disableIndicators"].as<bool>(_disableIndicators);
-	_movementType = (MovementType)node["movementType"].as<int>(_movementType);
-	if (const YAML::Node& p = node["moveCost"])
+	reader.tryRead("mindControllerID", _mindControllerID);
+	reader.tryRead("summonedPlayerUnit", _summonedPlayerUnit);
+	reader.tryRead("resummonedFakeCivilian", _resummonedFakeCivilian);
+	reader.tryRead("pickUpWeaponsMoreActively", _pickUpWeaponsMoreActively);
+	reader.tryRead("disableIndicators", _disableIndicators);
+	reader.tryRead("movementType", _movementType);
+	if (const auto& moveCost = reader["moveCost"])
 	{
-		_moveCostBase.load(p["basePercent"]);
-		_moveCostBaseFly.load(p["baseFlyPercent"]);
-		_moveCostBaseClimb.load(p["baseClimbPercent"]);
-		_moveCostBaseNormal.load(p["baseNormalPercent"]);
+		_moveCostBase.load(moveCost["basePercent"]);
+		_moveCostBaseFly.load(moveCost["baseFlyPercent"]);
+		_moveCostBaseClimb.load(moveCost["baseClimbPercent"]);
+		_moveCostBaseNormal.load(moveCost["baseNormalPercent"]);
 	}
-	_vip = node["vip"].as<bool>(_vip);
-	_bannedInNextStage = node["bannedInNextStage"].as<bool>(_bannedInNextStage);
-	_meleeAttackedBy = node["meleeAttackedBy"].as<std::vector<int> >(_meleeAttackedBy);
+	reader.tryRead("vip", _vip);
+	reader.tryRead("bannedInNextStage", _bannedInNextStage);
+	reader.tryRead("meleeAttackedBy", _meleeAttackedBy);
 
-	_allowAutoCombat = node["allowAutoCombat"].as<bool>(_allowAutoCombat);
-	_aggression = node["aggression"].as<bool>(_aggression);
+	reader.tryRead("allowAutoCombat", _allowAutoCombat);
+	reader.tryRead("aggression", _aggression);
 
-	_scriptValues.load(node, shared);
+	_scriptValues.load(reader, shared);
 }
 
 /**
  * Saves the soldier to a YAML file.
  * @return YAML node.
  */
-YAML::Node BattleUnit::save(const ScriptGlobal *shared) const
+void BattleUnit::save(YAML::YamlNodeWriter writer, const ScriptGlobal *shared) const
 {
-	YAML::Node node;
-
-	node["id"] = _id;
-	node["genUnitType"] = _type;
-	node["genUnitArmor"] = _armor->getType();
-	node["faction"] = (int)_faction;
-	node["status"] = (int)_status;
+	writer.setAsMap();
+	writer.write("id", _id);
+	writer.write("genUnitType", _type);
+	writer.write("genUnitArmor", _armor->getType());
+	writer.write("faction", _faction);
+	writer.write("status", _status);
 	if (_wantsToSurrender)
-		node["wantsToSurrender"] = _wantsToSurrender;
+		writer.write("wantsToSurrender", _wantsToSurrender);
 	if (_isSurrendering)
-		node["isSurrendering"] = _isSurrendering;
-	if (_hasPanickedLastTurn)
-		node["hasPanickedLastTurn"] = _hasPanickedLastTurn;
-	node["position"] = _pos;
-	node["direction"] = _direction;
-	node["directionTurret"] = _directionTurret;
-	node["tu"] = _tu;
-	node["health"] = _health;
-	node["mana"] = _mana;
-	node["stunlevel"] = _stunlevel;
-	node["energy"] = _energy;
-	node["morale"] = _morale;
+		writer.write("isSurrendering", _isSurrendering);
+	writer.write("position", _pos);
+	writer.write("direction", _direction);
+	writer.write("directionTurret", _directionTurret);
+	writer.write("tu", _tu);
+	writer.write("health", _health);
+	writer.write("mana", _mana);
+	writer.write("stunlevel", _stunlevel);
+	writer.write("energy", _energy);
+	writer.write("morale", _morale);
+
 	if (_kneeled)
-		node["kneeled"] = _kneeled;
+		writer.write("kneeled", _kneeled);
 	if (_floating)
-		node["floating"] = _floating;
-	node["armor"].SetStyle(YAML::EmitterStyle::Flow); for (int i=0; i < SIDE_MAX; i++) node["armor"].push_back(_currentArmor[i]);
-	node["fatalWounds"].SetStyle(YAML::EmitterStyle::Flow); for (int i=0; i < BODYPART_MAX; i++) node["fatalWounds"].push_back(_fatalWounds[i]);
-	node["fire"] = _fire;
-	node["expBravery"] = _exp.bravery;
-	node["expReactions"] = _exp.reactions;
-	node["expFiring"] = _exp.firing;
-	node["expThrowing"] = _exp.throwing;
-	node["expPsiSkill"] = _exp.psiSkill;
-	node["expPsiStrength"] = _exp.psiStrength;
-	node["expMana"] = _exp.mana;
-	node["expMelee"] = _exp.melee;
-	node["currStats"] = _stats;
+		writer.write("floating", _floating);
+	auto armorWriter = writer["armor"];
+	armorWriter.setAsSeq();
+	armorWriter.setFlowStyle();
+	for (int i = 0; i < SIDE_MAX; i++)
+		armorWriter.write(_currentArmor[i]);
+	auto fwWriter = writer["fatalWounds"];
+	fwWriter.setAsSeq();
+	fwWriter.setFlowStyle();
+	for (int i=0; i < BODYPART_MAX; i++)
+		fwWriter.write(_fatalWounds[i]);
+	writer.write("fire", _fire);
+	writer.write("expBravery", _exp.bravery);
+	writer.write("expReactions", _exp.reactions);
+	writer.write("expFiring", _exp.firing);
+	writer.write("expThrowing", _exp.throwing);
+	writer.write("expPsiSkill", _exp.psiSkill);
+	writer.write("expPsiStrength", _exp.psiStrength);
+	writer.write("expMana", _exp.mana);
+	writer.write("expMelee", _exp.melee);
+	writer.write("currStats", _stats);
 	if (_turretType > -1)
-		node["turretType"] = _turretType;
+		writer.write("turretType", _turretType);
 	if (_visible)
-		node["visible"] = _visible;
-	node["turnsSinceSpotted"] = _turnsSinceSpotted;
-	node["turnsLeftSpottedForSnipers"] = _turnsLeftSpottedForSnipers;
-	node["turnsSinceSeenByHostile"] = _turnsSinceSeenByHostile;
-	node["turnsSinceSeenByNeutral"] = _turnsSinceSeenByNeutral;
-	node["turnsSinceSeenByPlayer"] = _turnsSinceSeenByPlayer;
-	node["turnsSinceStunned"] = _turnsSinceStunned;
-	node["tileLastSpottedByHostile"] = _tileLastSpottedByHostile;
-	node["tileLastSpottedByNeutral"] = _tileLastSpottedByNeutral;
-	node["tileLastSpottedByPlayer"] = _tileLastSpottedByPlayer;
-	node["tileLastSpottedForBlindShotByHostile"] = _tileLastSpottedForBlindShotByHostile;
-	node["tileLastSpottedForBlindShotByNeutral"] = _tileLastSpottedForBlindShotByNeutral;
-	node["tileLastSpottedForBlindShotByPlayer"] = _tileLastSpottedForBlindShotByPlayer;
-	node["rankInt"] = _rankInt;
-	node["moraleRestored"] = _moraleRestored;
+		writer.write("visible", _visible);
+	writer.write("turnsSinceSpotted", _turnsSinceSpotted);
+	writer.write("turnsLeftSpottedForSnipers", _turnsLeftSpottedForSnipers);
+	writer.write("turnsSinceSeenByHostile", _turnsSinceSeenByHostile);
+	writer.write("turnsSinceSeenByNeutral", _turnsSinceSeenByNeutral);
+	writer.write("turnsSinceSeenByPlayer", _turnsSinceSeenByPlayer);
+	writer.write("turnsSinceStunned", _turnsSinceStunned);
+	writer.write("tileLastSpottedByHostile", _tileLastSpottedByHostile);
+	writer.write("tileLastSpottedByNeutral", _tileLastSpottedByNeutral);
+	writer.write("tileLastSpottedByPlayer", _tileLastSpottedByPlayer);
+	writer.write("tileLastSpottedForBlindShotByHostile", _tileLastSpottedForBlindShotByHostile);
+	writer.write("tileLastSpottedForBlindShotByNeutral", _tileLastSpottedForBlindShotByNeutral);
+	writer.write("tileLastSpottedForBlindShotByPlayer", _tileLastSpottedForBlindShotByPlayer);
+
+	writer.writeAs<int>("turnsSinceSpotted", _turnsSinceSpotted[FACTION_HOSTILE]);
+	writer.writeAs<int>("turnsLeftSpottedForSnipers", _turnsLeftSpottedForSnipers[FACTION_HOSTILE]);
+	writer.tryWriteAs<int>("turnsSinceSpottedByXcom", _turnsSinceSpotted[FACTION_PLAYER], 255);
+	writer.tryWriteAs<int>("turnsLeftSpottedForSnipersByXcom", _turnsLeftSpottedForSnipers[FACTION_PLAYER], 0);
+	writer.tryWriteAs<int>("turnsSinceSpottedByCivilian", _turnsSinceSpotted[FACTION_NEUTRAL], 255);
+	writer.tryWriteAs<int>("turnsLeftSpottedForSnipersByCivilian", _turnsLeftSpottedForSnipers[FACTION_NEUTRAL], 0);
+	writer.writeAs<int>("turnsSinceStunned", _turnsSinceStunned);
+
+	writer.write("rankInt", _rankInt);
+	writer.write("rankIntUnified", _rankIntUnified);
+	writer.write("moraleRestored", _moraleRestored);
+
 	if (getAIModule())
-	{
-		node["AI"] = getAIModule()->save();
-	}
-	node["killedBy"] = (int)_killedBy; // does not have a default value, must always be saved
+		getAIModule()->save(writer["AI"]);
+	writer.write("killedBy", _killedBy); // does not have a default value, must always be saved
 	if (_originalFaction != _faction)
-		node["originalFaction"] = (int)_originalFaction;
+		writer.write("originalFaction", _originalFaction);
 	if (_kills)
-		node["kills"] = _kills;
+		writer.write("kills", _kills);
 	if (_faction == FACTION_PLAYER && _dontReselect)
-		node["dontReselect"] = _dontReselect;
-
+		writer.write("dontReselect", _dontReselect);
 	if (_previousOwner)
-		node["previousOwner"] = _previousOwner->getId();
-
+		writer.write("previousOwner", _previousOwner->getId());
 	if (_spawnUnit)
 	{
-		node["spawnUnit"] = _spawnUnit->getType();
-		node["respawn"] = _respawn;
-		node["spawnUnitFaction"] = (int)_spawnUnitFaction;
+		writer.write("spawnUnit", _spawnUnit->getType());
+		writer.write("respawn", _respawn);
+		writer.write("spawnUnitFaction", _spawnUnitFaction);
 	}
-
-	node["motionPoints"] = _motionPoints;
+	writer.write("motionPoints", _motionPoints);
 	if (_customMarker > 0)
-		node["customMarker"] = _customMarker;
+		writer.write("customMarker", _customMarker);
 	if (_alreadyRespawned)
-		node["alreadyRespawned"] = _alreadyRespawned;
-	node["activeHand"] = _activeHand;
+		writer.write("alreadyRespawned", _alreadyRespawned);
+	writer.write("activeHand", _activeHand);
 	if (!_preferredHandForReactions.empty())
-		node["preferredHandForReactions"] = _preferredHandForReactions;
+		writer.write("preferredHandForReactions", _preferredHandForReactions);
 	if (_reactionsDisabledForLeftHand)
-		node["reactionsDisabledForLeftHand"] = _reactionsDisabledForLeftHand;
+		writer.write("reactionsDisabledForLeftHand", _reactionsDisabledForLeftHand);
 	if (_reactionsDisabledForRightHand)
-		node["reactionsDisabledForRightHand"] = _reactionsDisabledForRightHand;
-	node["tempUnitStatistics"] = _statistics->save();
+		writer.write("reactionsDisabledForRightHand", _reactionsDisabledForRightHand);
+	_statistics->save(writer["tempUnitStatistics"]);
 	if (_murdererId)
-		node["murdererId"] = _murdererId;
+		writer.write("murdererId", _murdererId);
 	if (_fatalShotSide)
-		node["fatalShotSide"] = (int)_fatalShotSide;
+		writer.write("fatalShotSide", _fatalShotSide);
 	if (_fatalShotBodyPart)
-		node["fatalShotBodyPart"] = (int)_fatalShotBodyPart;
+		writer.write("fatalShotBodyPart", _fatalShotBodyPart);
 	if (!_murdererWeapon.empty())
-		node["murdererWeapon"] = _murdererWeapon;
+		writer.write("murdererWeapon", _murdererWeapon);
 	if (!_murdererWeaponAmmo.empty())
-		node["murdererWeaponAmmo"] = _murdererWeaponAmmo;
-
-	for (size_t i = 0; i < _recolor.size(); ++i)
-	{
-		YAML::Node p;
-		p.SetStyle(YAML::EmitterStyle::Flow);
-		p.push_back((int)_recolor[i].first);
-		p.push_back((int)_recolor[i].second);
-		node["recolor"].push_back(p);
-	}
+		writer.write("murdererWeaponAmmo", _murdererWeaponAmmo);
+	writer.write("recolor", _recolor,
+		[](YAML::YamlNodeWriter& vectorWriter, std::pair<Uint8, Uint8> pair)
+		{
+			auto pairWriter = vectorWriter.write();
+			pairWriter.setAsSeq();
+			pairWriter.setFlowStyle();
+			pairWriter.write(pair.first);
+			pairWriter.write(pair.second);
+		});
 	if (_mindControllerID)
-		node["mindControllerID"] = _mindControllerID;
+		writer.write("mindControllerID", _mindControllerID);
 	if (_summonedPlayerUnit)
-		node["summonedPlayerUnit"] = _summonedPlayerUnit;
+		writer.write("summonedPlayerUnit", _summonedPlayerUnit);
 	if (_resummonedFakeCivilian)
-		node["resummonedFakeCivilian"] = _resummonedFakeCivilian;
+		writer.write("resummonedFakeCivilian", _resummonedFakeCivilian);
 	if (_pickUpWeaponsMoreActively)
-		node["pickUpWeaponsMoreActively"] = _pickUpWeaponsMoreActively;
+		writer.write("pickUpWeaponsMoreActively", _pickUpWeaponsMoreActively);
 	if (_disableIndicators)
-		node["disableIndicators"] = _disableIndicators;
+		writer.write("disableIndicators", _disableIndicators);
 
 	if (_originalMovementType != _movementType)
-		node["movementType"] = (int)_movementType;
-
+		writer.write("movementType", (int)_movementType);
+	if (_moveCostBase != _armor->getMoveCostBase() ||
+		_moveCostBaseFly != _armor->getMoveCostBaseFly() ||
+		_moveCostBaseClimb != _armor->getMoveCostBaseClimb() ||
+		_moveCostBaseNormal != _armor->getMoveCostBaseNormal())
 	{
-		YAML::Node p;
+		auto moveCostWriter = writer["moveCost"];
+		moveCostWriter.setAsMap();
+		moveCostWriter.setFlowStyle();
 		if (_moveCostBase != _armor->getMoveCostBase())
-		{
-			_moveCostBase.save(p, "basePercent");
-		}
+			_moveCostBase.save(moveCostWriter, "basePercent");
 		if (_moveCostBaseFly != _armor->getMoveCostBaseFly())
-		{
-			_moveCostBaseFly.save(p, "baseFlyPercent");
-		}
+			_moveCostBaseFly.save(moveCostWriter, "baseFlyPercent");
 		if (_moveCostBaseClimb != _armor->getMoveCostBaseClimb())
-		{
-			_moveCostBaseClimb.save(p, "baseClimbPercent");
-		}
+			_moveCostBaseClimb.save(moveCostWriter, "baseClimbPercent");
 		if (_moveCostBaseNormal != _armor->getMoveCostBaseNormal())
-		{
-			_moveCostBaseNormal.save(p, "baseNormalPercent");
-		}
-		if (!p.IsNull())
-		{
-			p.SetStyle(YAML::EmitterStyle::Flow);
-			node["moveCost"] = p;
-		}
+			_moveCostBaseNormal.save(moveCostWriter, "baseNormalPercent");
 	}
 	if (_vip)
-		node["vip"] = _vip;
+		writer.write("vip", _vip);
 	if (_bannedInNextStage)
-		node["bannedInNextStage"] = _bannedInNextStage;
+		writer.write("bannedInNextStage", _bannedInNextStage);
 	if (!_meleeAttackedBy.empty())
-	{
-		node["meleeAttackedBy"] = _meleeAttackedBy;
-	}
+		writer.write("meleeAttackedBy", _meleeAttackedBy);
 
-	node["allowAutoCombat"] = _allowAutoCombat;
-	node["aggression"] = _aggression;
+	// Adding missing entries from HEAD using new style
+	writer.write("allowAutoCombat", _allowAutoCombat);
+	writer.write("aggression", _aggression);
 
-	_scriptValues.save(node, shared);
-
-	return node;
+	// Save script values using the new writer method
+	_scriptValues.save(writer, shared);
 }
 
 /**
@@ -1738,7 +1735,7 @@ int BattleUnit::damage(Position relative, int damage, const RuleDamageType *type
 
 	if (!type->IgnoreDirection)
 	{
-		if (relative == Position(0, 0, 0))
+		if (relative.x == 0 && relative.y == 0 && relative.z <= 0)
 		{
 			side = SIDE_UNDER;
 		}
@@ -1852,21 +1849,20 @@ int BattleUnit::damage(Position relative, int damage, const RuleDamageType *type
 		&& !specialDamageTransform->getZombieUnit(this).empty()
 		&& getArmor()->getZombiImmune() == false)
 	{
-		if (attack.attacker)
+		specialDamageTransformChance = specialDamageTransform->getZombieUnitChance();
+
+		if (auto conf = attack.weapon_item ? attack.weapon_item->getActionConf(attack.type) : nullptr)
 		{
-			if (getOriginalFaction() == FACTION_HOSTILE && attack.attacker->getOriginalFaction() == FACTION_HOSTILE)
+			specialDamageTransformChance = useIntNullable(conf->ammoZombieUnitChanceOverride, specialDamageTransformChance);
+		}
+
+		if (getOriginalFaction() == FACTION_HOSTILE)
+		{
+			if (attack.attacker == nullptr || attack.attacker->getOriginalFaction() == FACTION_HOSTILE)
 			{
 				// (mind-controlled) chryssalid on snakeman action still not allowed
 				specialDamageTransformChance = 0;
 			}
-			else
-			{
-				specialDamageTransformChance = specialDamageTransform->getZombieUnitChance();
-			}
-		}
-		else
-		{
-			specialDamageTransformChance = getOriginalFaction() != FACTION_HOSTILE ? specialDamageTransform->getZombieUnitChance() : 0;
 		}
 	}
 	else
@@ -1974,6 +1970,8 @@ int BattleUnit::damage(Position relative, int damage, const RuleDamageType *type
 		constexpr int arg_selfDestructChance = 3;
 		constexpr int arg_moraleLoss = 4;
 		constexpr int arg_fire = 5;
+		constexpr int arg_attackerTurnsSinceSpotted = 6;
+		constexpr int arg_attackerTurnsLeftSpottedForSnipers = 7;
 
 		ModScript::DamageSpecialUnit::Output args { };
 
@@ -2026,6 +2024,39 @@ int BattleUnit::damage(Position relative, int damage, const RuleDamageType *type
 			{
 				// bullet/ammo
 				std::get<arg_fire>(args.data) = 0;
+			}
+		}
+
+		// AI direct hit tracking
+		std::get<arg_attackerTurnsSinceSpotted>(args.data) = 255;
+		std::get<arg_attackerTurnsLeftSpottedForSnipers>(args.data) = 0;
+		if (attack.attacker)
+		{
+			std::get<arg_attackerTurnsSinceSpotted>(args.data) = attack.attacker->getTurnsSinceSpottedByFaction(getFaction());
+			std::get<arg_attackerTurnsLeftSpottedForSnipers>(args.data) = attack.attacker->getTurnsLeftSpottedForSnipersByFaction(getFaction());
+
+			if (getFaction() != attack.attacker->getFaction() &&
+				(attack.type == BA_AIMEDSHOT || attack.type == BA_SNAPSHOT || attack.type == BA_AUTOSHOT) &&
+				attack.damage_item != nullptr &&
+				(relative == Position(0,0,0) || (attack.damage_item->getRules()->getExplosionRadius(attack) == 0)))
+			{
+				AIModule *ai = getAIModule();
+				if (ai != 0)
+				{
+					ai->setWasHitBy(attack.attacker);
+				}
+
+				std::get<arg_attackerTurnsSinceSpotted>(args.data) = 0;
+				if (Mod::EXTENDED_SPOT_ON_HIT_FOR_SNIPING > 0)
+				{
+					// 0 = don't spot
+					// 1 = spot only if the victim doesn't die or pass out
+					// 2 = always spot
+					if (Mod::EXTENDED_SPOT_ON_HIT_FOR_SNIPING > 1 || !this->isOutThresholdExceed())
+					{
+						std::get<arg_attackerTurnsLeftSpottedForSnipers>(args.data) = std::max(std::get<arg_attackerTurnsLeftSpottedForSnipers>(args.data), getSpotterDuration());
+					}
+				}
 			}
 		}
 
@@ -2085,6 +2116,12 @@ int BattleUnit::damage(Position relative, int damage, const RuleDamageType *type
 			setAlreadyExploded(true);
 			Position p = getPosition().toVoxel();
 			save->getBattleGame()->statePushNext(new ExplosionBState(save->getBattleGame(), p, BattleActionAttack{ BA_SELF_DESTRUCT, this, selfDestructItem, selfDestructItem }, 0));
+		}
+
+		if (attack.attacker)
+		{
+			attack.attacker->setTurnsSinceSpottedByFaction(getFaction(), std::get<arg_attackerTurnsSinceSpotted>(args.data));
+			attack.attacker->setTurnsLeftSpottedForSnipersByFaction(getFaction(), std::get<arg_attackerTurnsLeftSpottedForSnipers>(args.data));
 		}
 	}
 
@@ -2283,7 +2320,7 @@ RuleItemUseCost BattleUnit::getActionTUs(BattleActionType actionType, const Rule
 	RuleItemUseCost cost;
 	if (item != 0)
 	{
-		RuleItemUseCost flat = item->getFlatUse();
+		RuleItemUseFlat flat = item->getFlatUse();
 		switch (actionType)
 		{
 			case BA_PRIME:
@@ -2333,7 +2370,7 @@ RuleItemUseCost BattleUnit::getActionTUs(BattleActionType actionType, const Rule
 	return cost;
 }
 
-void BattleUnit::applyPercentages(RuleItemUseCost &cost, const RuleItemUseCost &flat) const
+void BattleUnit::applyPercentages(RuleItemUseCost &cost, const RuleItemUseFlat &flat) const
 {
 	{
 		// if it's a percentage, apply it to unit TUs
@@ -2909,11 +2946,19 @@ void BattleUnit::prepareMorale(int morale)
 	{
 		moraleChange(morale);
 		int chance = 100 - (2 * getMorale());
-		if (RNG::generate(1,100) <= chance)
+		if (RNG::percent(chance))
 		{
-			int type = RNG::generate(0,100);
-			int berserkChance = _unitRules ? _unitRules->getBerserkChance() : 33;
-			_status = (type <= berserkChance ? STATUS_BERSERK : STATUS_PANICKING); // 33% chance of berserk, panic can mean freeze or flee, but that is determined later
+			int berserkChance = _unitRules ? _unitRules->getBerserkChance() : -1; // -1 represents true 1/3 (33.33333...%)
+			bool berserk = false;
+			if (berserkChance == -1)
+			{
+				berserk = (RNG::generate(0, 2) == 0); // vanilla OG
+			}
+			else
+			{
+				berserk = RNG::percent(berserkChance);
+			}
+			_status = (berserk ? STATUS_BERSERK : STATUS_PANICKING); // 33% chance of berserk, panic can mean freeze or flee, but that is determined later
 			_wantsToSurrender = true;
 			_hasPanickedLastTurn = true;
 		}
@@ -3504,6 +3549,39 @@ AIModule *BattleUnit::getAIModule() const
 {
 	return _currentAIState;
 }
+
+/**
+ * Gets weight value as hostile unit.
+ */
+AIAttackWeight BattleUnit::getAITargetWeightAsHostile(const Mod *mod) const
+{
+	return _armor->getAITargetWeightAsHostile().getValueOr(mod->getAITargetWeightAsHostile());
+}
+
+/**
+ * Gets weight value as civilian unit when consider by aliens.
+ */
+AIAttackWeight BattleUnit::getAITargetWeightAsHostileCivilians(const Mod *mod) const
+{
+	return _armor->getAITargetWeightAsHostileCivilians().getValueOr(mod->getAITargetWeightAsHostileCivilians());
+}
+
+/**
+ * Gets weight value as same faction unit.
+ */
+AIAttackWeight BattleUnit::getAITargetWeightAsFriendly(const Mod *mod) const
+{
+	return _armor->getAITargetWeightAsFriendly().getValueOr(mod->getAITargetWeightAsFriendly());
+}
+
+/**
+ * Gets weight value as neutral unit (xcom to civ or vice versa).
+ */
+AIAttackWeight BattleUnit::getAITargetWeightAsNeutral(const Mod *mod) const
+{
+	return _armor->getAITargetWeightAsNeutral().getValueOr(mod->getAITargetWeightAsNeutral());
+}
+
 
 /**
  * Set whether this unit is visible.
@@ -4301,7 +4379,7 @@ bool BattleUnit::postMissionProcedures(const Mod *mod, SavedGame *geoscape, Save
 		v = caps.strength - stats->strength;
 		if (v > 0) stats->strength += RNG::generate(0, v/10 + 2);
 		v = caps.stamina - stats->stamina;
-		if (v > 0) stats->stamina += RNG::generate(0, v/10 + 2);
+		if (v > 0) stats->stamina += RNG::generate(0, v/15 + 2);
 	}
 
 	statsDiff.statGrowth += *stats; // add new stat
@@ -4994,13 +5072,86 @@ int BattleUnit::getCarriedWeight(BattleItem *draggingItem) const
 	return std::max(0,weight);
 }
 
+
+
+/**
+ * Set default state on unit.
+ */
+void BattleUnit::resetTurnsSince()
+{
+	for (auto& since : _turnsSinceSpotted)
+	{
+		since = 255;
+	}
+	for (auto& left : _turnsLeftSpottedForSnipers)
+	{
+		left = 0;
+	}
+	//_turnsSinceStunned is reset elsewhere
+}
+
+
+/**
+ * Update counters on unit.
+ */
+void BattleUnit::updateTurnsSince()
+{
+	for (auto& since : _turnsSinceSpotted)
+	{
+		since = Clamp(since + 1, 0, 255);
+	}
+	for (auto& left : _turnsLeftSpottedForSnipers)
+	{
+		left = Clamp(left - 1, 0, 255);
+	}
+	//_turnsSinceStunned is updated elsewhere
+}
+
+
+
+namespace
+{
+
+/// safe setter of value in array
+template<int I>
+void setUint8Array(Uint8 (&arr)[I], int offset, int value)
+{
+	if (0 <= offset && offset < I)
+	{
+		arr[offset] = Clamp(value, 0, 255);
+	}
+}
+
+/// safe getter of value in array
+template<int I>
+int getUint8Array(const Uint8 (&arr)[I], int offset)
+{
+	if (0 <= offset && offset < I)
+	{
+		return arr[offset];
+	}
+
+	return 0;
+}
+
+} // namespace
+
+
 /**
  * Set how long since this unit was last exposed.
  * @param turns number of turns
  */
 void BattleUnit::setTurnsSinceSpotted (int turns)
 {
-	_turnsSinceSpotted = turns;
+	_turnsSinceSpotted[FACTION_HOSTILE] = turns;
+}
+
+/**
+ * Set how many turns this unit will be exposed for. For specific faction.
+ */
+void BattleUnit::setTurnsSinceSpottedByFaction(UnitFaction faction, int turns)
+{
+	setUint8Array(_turnsSinceSpotted, faction, turns);
 }
 
 /**
@@ -5009,7 +5160,15 @@ void BattleUnit::setTurnsSinceSpotted (int turns)
  */
 int BattleUnit::getTurnsSinceSpotted() const
 {
-	return _turnsSinceSpotted;
+	return _turnsSinceSpotted[FACTION_HOSTILE];
+}
+
+/**
+ * Set how many turns this unit will be exposed for. For specific faction.
+ */
+int BattleUnit::getTurnsSinceSpottedByFaction(UnitFaction faction) const
+{
+	return getUint8Array(_turnsSinceSpotted, faction);
 }
 
 /**
@@ -5018,7 +5177,15 @@ int BattleUnit::getTurnsSinceSpotted() const
  */
 void BattleUnit::setTurnsLeftSpottedForSnipers (int turns)
 {
-	_turnsLeftSpottedForSnipers = turns;
+	_turnsLeftSpottedForSnipers[FACTION_HOSTILE] = turns;
+}
+
+/**
+ * Set how many turns left snipers know about this target. For specific faction.
+ */
+void BattleUnit::setTurnsLeftSpottedForSnipersByFaction (UnitFaction faction, int turns)
+{
+	setUint8Array(_turnsLeftSpottedForSnipers, faction, turns);
 }
 
 /**
@@ -5027,7 +5194,15 @@ void BattleUnit::setTurnsLeftSpottedForSnipers (int turns)
  */
 int BattleUnit::getTurnsLeftSpottedForSnipers() const
 {
-	return _turnsLeftSpottedForSnipers;
+	return _turnsLeftSpottedForSnipers[FACTION_HOSTILE];
+}
+
+/**
+ * Get how many turns left snipers know about this target. For specific faction.
+ */
+int BattleUnit::getTurnsLeftSpottedForSnipersByFaction(UnitFaction faction) const
+{
+	return getUint8Array(_turnsLeftSpottedForSnipers, faction);
 }
 
 /**
@@ -5180,7 +5355,7 @@ int BattleUnit::getRankInt() const
  * Derive the numeric unit rank from the string rank
  * (for soldier units).
  */
-void BattleUnit::deriveRank()
+void BattleUnit::deriveSoldierRank()
 {
 	if (_geoscapeSoldier)
 	{
@@ -5195,6 +5370,41 @@ void BattleUnit::deriveRank()
 		default:             _rankInt = 0; break;
 		}
 	}
+	_rankIntUnified = _rankInt;
+}
+
+/**
+ * derive a rank integer based on rank string (for Alien)
+ */
+void BattleUnit::deriveHostileRank()
+{
+	const int max = 7;
+	const char* rankList[max] =
+	{
+		"STR_LIVE_SOLDIER",
+		"STR_LIVE_ENGINEER",
+		"STR_LIVE_MEDIC",
+		"STR_LIVE_NAVIGATOR",
+		"STR_LIVE_LEADER",
+		"STR_LIVE_COMMANDER",
+		"STR_LIVE_TERRORIST",
+	};
+	for (int i = 0; i < max; ++i)
+	{
+		if (_rank.compare(rankList[i]) == 0)
+		{
+			_rankIntUnified = i;
+			break;
+		}
+	}
+}
+
+/**
+ * derive a rank integer based on rank string (for Civilians)
+ */
+void BattleUnit::deriveNeutralRank()
+{
+	_rankIntUnified = RNG::seedless(0, 7);
 }
 
 /**
@@ -6246,6 +6456,21 @@ void getLookVariantScript(const BattleUnit *bu, int &ret)
 	ret = 0;
 }
 
+struct getRuleUnitScript
+{
+	static RetEnum func(const BattleUnit* bu, const Unit*& ret)
+	{
+		if (bu)
+		{
+			ret = bu->getUnitRules(); // Note: can be nullptr
+		}
+		else
+		{
+			ret = nullptr;
+		}
+		return RetContinue;
+	}
+};
 struct getRuleSoldierScript
 {
 	static RetEnum func(const BattleUnit *bu, const RuleSoldier* &ret)
@@ -6562,7 +6787,7 @@ void addStunScript(BattleUnit *bu, int val)
 	}
 }
 
-template<int BattleUnit::*StatCurr, int Min, int Max>
+template<auto StatCurr, int Min, int Max>
 void setBaseStatRangeScript(BattleUnit *bu, int val)
 {
 	if (bu)
@@ -6570,6 +6795,16 @@ void setBaseStatRangeScript(BattleUnit *bu, int val)
 		(bu->*StatCurr) = Clamp(val, Min, Max);
 	}
 }
+
+template<auto StatCurr, int Offset, int Min, int Max>
+void setBaseStatRangeArrayScript(BattleUnit *bu, int val)
+{
+	if (bu)
+	{
+		(bu->*StatCurr)[Offset] = Clamp(val, Min, Max);
+	}
+}
+
 
 template<int BattleUnit::*StatCurr, int Min, int Max>
 void addBaseStatRangeScript(BattleUnit *bu, int val)
@@ -6872,6 +7107,7 @@ void BattleUnit::ScriptRegister(ScriptParserBase* parser)
 
 	bu.addField<&BattleUnit::_id>("getId");
 	bu.addField<&BattleUnit::_rankInt>("getRank");
+	bu.addField<&BattleUnit::_rankIntUnified>("getRankUnified");
 	bu.add<&getGenderScript>("getGender");
 	bu.add<&getLookScript>("getLook");
 	bu.add<&getLookVariantScript>("getLookVariant");
@@ -6989,6 +7225,7 @@ void BattleUnit::ScriptRegister(ScriptParserBase* parser)
 
 	bu.add<&BattleUnit::getOverKillDamage>("getOverKillDamage");
 	bu.addRules<Armor, &BattleUnit::getArmor>("getRuleArmor");
+	bu.addFunc<getRuleUnitScript>("getRuleUnit");
 	bu.addFunc<getRuleSoldierScript>("getRuleSoldier");
 	bu.addFunc<getGeoscapeSoldierScript>("getGeoscapeSoldier");
 	bu.addFunc<getGeoscapeSoldierConstScript>("getGeoscapeSoldier");
@@ -7013,10 +7250,23 @@ void BattleUnit::ScriptRegister(ScriptParserBase* parser)
 	bu.add<&getPositionYScript>("getPosition.getY");
 	bu.add<&getPositionZScript>("getPosition.getZ");
 	bu.add<&BattleUnit::getPosition>("getPosition");
+
+
 	bu.add<&BattleUnit::getTurnsSinceSpotted>("getTurnsSinceSpotted");
-	bu.add<&setBaseStatRangeScript<&BattleUnit::_turnsSinceSpotted, 0, 255>>("setTurnsSinceSpotted");
+	bu.add<&setBaseStatRangeArrayScript<&BattleUnit::_turnsSinceSpotted, FACTION_HOSTILE, 0, 255>>("setTurnsSinceSpotted");
+
+	bu.add<&BattleUnit::getTurnsSinceSpottedByFaction>("getTurnsSinceSpottedByFaction");
+	bu.add<&BattleUnit::setTurnsSinceSpottedByFaction>("setTurnsSinceSpottedByFaction");
+
+	bu.add<&BattleUnit::getTurnsLeftSpottedForSnipers>("getTurnsLeftSpottedForSnipers");
+	bu.add<&setBaseStatRangeArrayScript<&BattleUnit::_turnsLeftSpottedForSnipers, FACTION_HOSTILE, 0, 255>>("setTurnsLeftSpottedForSnipers");
+
+	bu.add<&BattleUnit::getTurnsLeftSpottedForSnipersByFaction>("getTurnsLeftSpottedForSnipersByFaction");
+	bu.add<&BattleUnit::setTurnsLeftSpottedForSnipersByFaction>("setTTurnsLeftSpottedForSnipersByFaction");
+
 	bu.addField<&BattleUnit::_turnsSinceStunned>("getTurnsSinceStunned");
 	bu.add<&setBaseStatRangeScript<&BattleUnit::_turnsSinceStunned, 0, 255>>("setTurnsSinceStunned");
+
 
 	bu.addScriptValue<BindBase::OnlyGet, &BattleUnit::_armor, &Armor::getScriptValuesRaw>();
 	bu.addScriptValue<&BattleUnit::_scriptValues>();
@@ -7251,6 +7501,20 @@ ModScript::VisibilityUnitParser::VisibilityUnitParser(ScriptGlobal* shared, cons
 }
 
 /**
+ * Constructor of visibility script parser.
+ */
+ModScript::AiCalculateTargetWeightParser::AiCalculateTargetWeightParser(ScriptGlobal* shared, const std::string& name, Mod* mod) : ScriptParserEvents{ shared, name,
+	"current_target_weight",
+	"default_target_weight",
+
+	"ai_unit", "target_unit", "battle_game" }
+{
+	BindBase b { this };
+
+	b.addCustomPtr<const Mod>("rules", mod);
+}
+
+/**
  * Init all required data in script using object data.
  */
 void BattleUnit::ScriptFill(ScriptWorkerBlit* w, const BattleUnit* unit, const SavedBattleGame* save, int body_part, int anim_frame, int shade, int burn)
@@ -7292,6 +7556,8 @@ ModScript::DamageSpecialUnitParser::DamageSpecialUnitParser(ScriptGlobal* shared
 	"self_destruct_chance",
 	"morale_loss",
 	"fire",
+	"attacker_turns_since_spotted",
+	"attacker_turns_left_spotted_for_snipers",
 
 	"unit", "damaging_item", "weapon_item", "attacker",
 	"battle_game", "skill", "health_damage", "orig_power", "part", "side", "damaging_type", "battle_action", }

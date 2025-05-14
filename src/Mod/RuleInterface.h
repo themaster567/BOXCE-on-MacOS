@@ -19,7 +19,7 @@
  */
 #include <string>
 #include <map>
-#include <yaml-cpp/yaml.h>
+#include "../Engine/Yaml.h"
 
 namespace OpenXcom
 {
@@ -28,10 +28,22 @@ class Mod;
 
 struct Element
 {
-	/// basic rect info, and 3 colors.
-	int x, y, w, h, color, color2, border, custom;
+	/// basic rect info.
+	int x = INT_MAX;
+	int y = INT_MAX;
+	int w = INT_MAX;
+	int h = INT_MAX;
+
+	/// 3 colors
+	int color = INT_MAX;
+	int color2 = INT_MAX;
+	int border = INT_MAX;
+
+	/// Custom value
+	int custom = 0;
+
 	/// defines inversion behaviour
-	bool TFTDMode;
+	bool TFTDMode = false;
 };
 
 class RuleInterface
@@ -52,9 +64,11 @@ public:
 	/// Destructor.
 	~RuleInterface();
 	/// Load from YAML.
-	void load(const YAML::Node& node, Mod *mod);
+	void load(const YAML::YamlNodeReader& reader, Mod *mod);
+	/// Get an element. Can be `nullptr`.
+	const Element *getElementOptional(const std::string &id) const;
 	/// Get an element.
-	Element *getElement(const std::string &id);
+	const Element *getElement(const std::string &id) const;
 	/// Get palette.
 	const std::string &getPalette() const;
 	/// Get parent interface rule.

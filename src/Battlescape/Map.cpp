@@ -108,7 +108,7 @@ Map::Map(Game *game, int width, int height, int x, int y, int visibleMapHeight) 
 	_game(game), _arrow(0), _anyIndicator(false), _isAltPressed(false),
 	_selectorX(0), _selectorY(0), _mouseX(0), _mouseY(0), _cursorType(CT_NORMAL), _cursorSize(1), _animFrame(0),
 	_projectile(0), _followProjectile(true), _projectileInFOV(false), _explosionInFOV(false), _launch(false), _visibleMapHeight(visibleMapHeight),
-	_unitDying(false), _smoothingEngaged(false), _flashScreen(false), _bgColor(15), _projectileSet(0), _showObstacles(false)
+	_unitDying(false), _smoothingEngaged(false), _flashScreen(false), _bgColor(15), _projectileSet(0), _showObstacles(false), _showInfoOnCursor(false)
 {
 	_iconHeight = _game->getMod()->getInterface("battlescape")->getElement("icons")->h;
 	_iconWidth = _game->getMod()->getInterface("battlescape")->getElement("icons")->w;
@@ -157,6 +157,7 @@ Map::Map(Game *game, int width, int height, int x, int y, int visibleMapHeight) 
 	_obstacleTimer->stop();
 	_obstacleTimer->onTimer((SurfaceHandler)&Map::disableObstacles);
 
+	_showInfoOnCursor = ((Options::battleUFOExtenderAccuracy || Options::battleRealisticAccuracy) && Options::oxceShowAccuracyOnCrosshair == 1) || Options::oxceShowAccuracyOnCrosshair == 2;
 	_txtAccuracy = new Text(44, 18, 0, 0);
 	_txtAccuracy->setSmall();
 	_txtAccuracy->setPalette(_game->getScreen()->getPalette());
@@ -442,6 +443,8 @@ static const int TXT_BROWN	= Palette::blockOffset(Pathfinding::brown - 1) - 1;
 static const int TXT_WHITE	= Palette::blockOffset(Pathfinding::white - 1) - 1;
 
 static const int ArrowBobOffsets[8] = {0,1,2,1,0,1,2,1};
+static const int ArrowColorsUFO[4] = {6, 3, 14, 4};   // white,    red, blue, green
+static const int ArrowColorsTFTD[4] = {4, 11, 16, 6}; // white, orange, blue, green
 
 int getArrowBobForFrame(int frame)
 {
@@ -734,7 +737,8 @@ void Map::drawTerrain(Surface *surface)
 	int dummy;
 	BattleUnit *movingUnit = _save->getTileEngine()->getMovingUnit();
 	int tileShade, tileColor, obstacleShade;
-	UnitSprite unitSprite(surface, _game->getMod(), _save, _animFrame, _save->getDepth() != 0);
+	UnitSprite unitSprite(surface, _game->getMod(), _save, _animFrame, _save->getDepth() != 0,
+		_isTFTD ? ArrowColorsTFTD[1] : ArrowColorsUFO[1], _isTFTD ? ArrowColorsTFTD[2] : ArrowColorsUFO[2]);
 	ItemSprite itemSprite(surface, _game->getMod(), _save, _animFrame);
 	int colorBeforeFoW = _nvColor;
 
@@ -1365,17 +1369,17 @@ void Map::drawTerrain(Surface *surface)
 							tmpSurface = _game->getMod()->getSurfaceSet("CURSOR.PCK")->getFrame(frameNumber);
 							Surface::blitRaw(surface, tmpSurface, screenPosition.x, screenPosition.y, 0);
 
-							// UFO extender / Realistic accuracy: display adjusted accuracy value on crosshair in real-time.
-							if ((_cursorType == CT_AIM || _cursorType == CT_PSI || _cursorType == CT_WAYPOINT)
-								&& ((Options::battleUFOExtenderAccuracy || Options::battleRealisticAccuracy) && Options::oxceShowAccuracyOnCrosshair == 1 || Options::oxceShowAccuracyOnCrosshair == 2))
+							// UFO extender accuracy: display adjusted accuracy value on crosshair in real-time.
+							if (_cursorType >= CT_AIM && _showInfoOnCursor) // CT_AIM, CT_PSI, CT_WAYPOINT, CT_THROW
 							{
 								bool targetSelf = false;
 								int accuracy = 0;
 								int maxVoxels = 0;
 								int snipingBonus = 0;
 								double maxExposure = 0.0;
-								bool coverHasEffect = AccuracyMod.coverEfficiency[ (int)Options::battleRealisticCoverEfficiency ];
-								double coverEffciencyCoeff = AccuracyMod.coverEfficiency[ (int)Options::battleRealisticCoverEfficiency ] / 100.0;
+								const Mod::AccuracyModConfig *AccuracyMod = _game->getMod()->getAccuracyModConfig();
+								bool coverHasEffect = AccuracyMod->coverEfficiency[ (int)Options::battleRealisticCoverEfficiency ];
+								double coverEffciencyCoeff = AccuracyMod->coverEfficiency[ (int)Options::battleRealisticCoverEfficiency ] / 100.0;
 								BattleAction *action = _save->getBattleGame()->getCurrentAction();
 								const RuleItem *weapon = action->weapon->getRules();
 								bool isArcingShot = action->weapon->getArcingShot(action->type);
@@ -1470,7 +1474,7 @@ void Map::drawTerrain(Surface *surface)
 									if (unit && unit->getVisible()) // If we are targeting unit
 									{
 										targetSize = unit->getArmor()->getSize();
-										sizeMultiplier = (targetSize == 1 ? 1 : AccuracyMod.SizeMultiplier);
+										sizeMultiplier = (targetSize == 1 ? 1 : AccuracyMod->sizeMultiplier);
 										targetTile = unit->getTile();
 
 										exposedVoxels.reserve(( 1 + BattleUnit::BIG_MAX_RADIUS * 2) * TileEngine::voxelTileSize.z / 2 );
@@ -1565,10 +1569,10 @@ void Map::drawTerrain(Surface *surface)
 									}
 
 									bool improvedSnapEnabled = Options::battleRealisticImprovedSnap;
-									bool belowBonusThreshold = upperLimit < AccuracyMod.bonusDistanceMin;
-									bool inBonusZone = upperLimit >= AccuracyMod.bonusDistanceMin && upperLimit <= AccuracyMod.bonusDistanceMax;
-									bool aboveBonusThreshold = upperLimit > AccuracyMod.bonusDistanceMax;
-									bool maxRangeAllowsBonus = maxRange > AccuracyMod.bonusDistanceMax;
+									bool belowBonusThreshold = upperLimit < AccuracyMod->bonusDistanceMin;
+									bool inBonusZone = upperLimit >= AccuracyMod->bonusDistanceMin && upperLimit <= AccuracyMod->bonusDistanceMax;
+									bool aboveBonusThreshold = upperLimit > AccuracyMod->bonusDistanceMax;
+									bool maxRangeAllowsBonus = maxRange > AccuracyMod->bonusDistanceMax;
 									bool noMinRange = weapon->getMinRange() == 0;
 									bool improvedSnapBonusEnabled = inBonusZone && maxRangeAllowsBonus && improvedSnapEnabled;
 
@@ -1580,10 +1584,10 @@ void Map::drawTerrain(Surface *surface)
 										maxDistanceVoxels = upperLimitVoxels;
 
 									else if (improvedSnapBonusEnabled)
-										maxDistanceVoxels = AccuracyMod.bonusDistanceMax * Position::TileXY;
+										maxDistanceVoxels = AccuracyMod->bonusDistanceMax * Position::TileXY;
 
 									else if (aboveBonusThreshold)
-										maxDistanceVoxels = AccuracyMod.bonusDistanceMax * Position::TileXY;
+										maxDistanceVoxels = AccuracyMod->bonusDistanceMax * Position::TileXY;
 
 									else
 										maxDistanceVoxels = upperLimitVoxels;
@@ -1629,23 +1633,23 @@ void Map::drawTerrain(Surface *surface)
 									}
 
 									// Apply additional rules for low-accuracy shots
-									if (accuracy <= AccuracyMod.MinCap)
+									if (accuracy <= AccuracyMod->minCap)
 									{
-										accuracy = AccuracyMod.MinCap;
+										accuracy = AccuracyMod->minCap;
 
 										// Check if target exposure is less than 5% (or 2.5% for big units)
 										// That's a particulary hard shot
 										int hardShotAccuracy = (int)(maxExposure / targetSize * 100);
-										if (hardShotAccuracy > 0 && hardShotAccuracy < AccuracyMod.MinCap)
+										if (hardShotAccuracy > 0 && hardShotAccuracy < AccuracyMod->minCap)
 											accuracy = hardShotAccuracy;
 
-										if (isKneeled) accuracy += AccuracyMod.KneelBonus; // And let's make kneeling more meaningful for such shots
-										if (action->type == BA_AIMEDSHOT) accuracy += AccuracyMod.AimBonus; // Same for aiming
+										if (isKneeled) accuracy += AccuracyMod->kneelBonus; // And let's make kneeling more meaningful for such shots
+										if (action->type == BA_AIMEDSHOT) accuracy += AccuracyMod->aimBonus; // Same for aiming
 										_txtAccuracy->setColor( TXT_RED );
 									}
-									else if (accuracy > AccuracyMod.MaxCap)
+									else if (accuracy > AccuracyMod->maxCap)
 									{
-										accuracy = AccuracyMod.MaxCap;
+										accuracy = AccuracyMod->maxCap;
 									}
 
 									distanceSq = action->actor->distance3dToPositionSq(Position(itX, itY,itZ));
@@ -1695,7 +1699,10 @@ void Map::drawTerrain(Surface *surface)
 										_txtAccuracy->setColor( TXT_YELLOW );
 									}
 
-									bool outOfRange = weapon->isOutOfRange(distanceSq);
+									bool outOfRange = action->type == BA_THROW
+										? weapon->isOutOfThrowRange(distanceSq, _save->getDepth())
+										: weapon->isOutOfRange(distanceSq);
+
 									// zero accuracy or out of range: set it red.
 									if (accuracy <= 0 || outOfRange)
 									{

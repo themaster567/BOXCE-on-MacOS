@@ -1409,7 +1409,8 @@ void StatsForNerdsState::addPercentageSignOrNothing(std::ostringstream &ss, cons
 /**
  * Adds a full RuleItemUseCost to the table.
  */
-void StatsForNerdsState::addRuleItemUseCostFull(std::ostringstream &ss, const RuleItemUseCost &value, const std::string &propertyName, const RuleItemUseCost &defaultvalue, bool smartFormat, const RuleItemUseCost &formatBy)
+template<typename T>
+void StatsForNerdsState::addRuleItemUseCostFull(std::ostringstream &ss, const RuleItemUseRuleBase<T> &value, const std::string &propertyName, const RuleItemUseRuleBase<T> &defaultvalue, bool smartFormat, const RuleItemUseFlat &formatBy)
 {
 	bool isDefault = false;
 	if (value.Time == defaultvalue.Time &&
@@ -1854,7 +1855,6 @@ void StatsForNerdsState::initItemList()
 	addInteger(ss, itemRule->getManaExperience(), "manaExperience");
 	addBoolean(ss, itemRule->getArcingShot(), "arcingShot");
 	addBoolean(ss, itemRule->isFireExtinguisher(), "isFireExtinguisher");
-	addBoolean(ss, itemRule->isExplodingInHands(), "isExplodingInHands");
 	addInteger(ss, itemRule->getWaypoints(), "waypoints");
 	addInteger(ss, itemRule->getSprayWaypoints(), "sprayWaypoints");
 
@@ -1873,6 +1873,10 @@ void StatsForNerdsState::initItemList()
 	addBoolean(ss, itemRule->convertToCivilian(), "convertToCivilian");
 	addBoolean(ss, itemRule->isLOSRequired(), "LOSRequired");
 
+	if (itemBattleType == BT_GRENADE || _showDebug)
+	{
+		addInteger(ss, itemRule->getExplodeInventory(mod), "explodeInventory", 0); // not raw!
+	}
 	if (itemBattleType == BT_FIREARM
 		|| itemBattleType == BT_GRENADE
 		|| itemBattleType == BT_PROXIMITYGRENADE
@@ -1937,8 +1941,12 @@ void StatsForNerdsState::initItemList()
 	}
 
 	addInteger(ss, itemRule->getWeight(), "weight", 3);
-	addInteger(ss, itemRule->getThrowRange(), "throwRange");
-	addInteger(ss, itemRule->getUnderwaterThrowRange(), "underwaterThrowRange");
+	addInteger(ss, itemRule->getThrowRange(), "throwRange", 200);
+	addInteger(ss, itemRule->getUnderwaterThrowRange(), "underwaterThrowRange", 200);
+
+	addInteger(ss, itemRule->getThrowDropoffRange(), "throwDropoffRange", 99);
+	addInteger(ss, itemRule->getUnderwaterThrowDropoffRange(), "underwaterThrowDropoffRange", 99);
+	addInteger(ss, itemRule->getThrowDropoff(), "throwDropoff", 5);
 
 	addRuleStatBonus(ss, *itemRule->getThrowMultiplierRaw(), "throwMultiplier");
 	addIntegerPercent(ss, itemRule->getAccuracyThrow(), "accuracyThrow", 100);
@@ -2077,6 +2085,9 @@ void StatsForNerdsState::initItemList()
 		addSingleString(ss, itemRule->getConfigAimed()->name, "name", "STR_AIMED_SHOT");
 		addSingleString(ss, itemRule->getConfigAimed()->shortName, "shortName");
 		addInteger(ss, itemRule->getConfigAimed()->ammoSlot, "ammoSlot");
+		addInteger(ss, itemRule->getConfigAimed()->ammoZombieUnitChanceOverride, "ammoZombieUnitChanceOverride", -1);
+		addInteger(ss, itemRule->getConfigAimed()->ammoSpawnUnitChanceOverride, "ammoSpawnUnitChanceOverride", -1);
+		addInteger(ss, itemRule->getConfigAimed()->ammoSpawnItemChanceOverride, "ammoSpawnItemChanceOverride", -1);
 		addBoolean(ss, itemRule->getConfigAimed()->arcing, "arcing");
 		endHeading();
 	}
@@ -2089,6 +2100,9 @@ void StatsForNerdsState::initItemList()
 		addSingleString(ss, itemRule->getConfigAuto()->name, "name", "STR_AUTO_SHOT");
 		addSingleString(ss, itemRule->getConfigAuto()->shortName, "shortName");
 		addInteger(ss, itemRule->getConfigAuto()->ammoSlot, "ammoSlot");
+		addInteger(ss, itemRule->getConfigAuto()->ammoZombieUnitChanceOverride, "ammoZombieUnitChanceOverride", -1);
+		addInteger(ss, itemRule->getConfigAuto()->ammoSpawnUnitChanceOverride, "ammoSpawnUnitChanceOverride", -1);
+		addInteger(ss, itemRule->getConfigAuto()->ammoSpawnItemChanceOverride, "ammoSpawnItemChanceOverride", -1);
 		addBoolean(ss, itemRule->getConfigAuto()->arcing, "arcing");
 		endHeading();
 	}
@@ -2101,6 +2115,9 @@ void StatsForNerdsState::initItemList()
 		addSingleString(ss, itemRule->getConfigSnap()->name, "name", "STR_SNAP_SHOT");
 		addSingleString(ss, itemRule->getConfigSnap()->shortName, "shortName");
 		addInteger(ss, itemRule->getConfigSnap()->ammoSlot, "ammoSlot");
+		addInteger(ss, itemRule->getConfigSnap()->ammoZombieUnitChanceOverride, "ammoZombieUnitChanceOverride", -1);
+		addInteger(ss, itemRule->getConfigSnap()->ammoSpawnUnitChanceOverride, "ammoSpawnUnitChanceOverride", -1);
+		addInteger(ss, itemRule->getConfigSnap()->ammoSpawnItemChanceOverride, "ammoSpawnItemChanceOverride", -1);
 		addBoolean(ss, itemRule->getConfigSnap()->arcing, "arcing");
 		endHeading();
 	}
@@ -2123,6 +2140,9 @@ void StatsForNerdsState::initItemList()
 			}
 		}
 		addInteger(ss, ammoSlotCurrent, "ammoSlot", ammoSlotDefault);
+		addInteger(ss, itemRule->getConfigMelee()->ammoZombieUnitChanceOverride, "ammoZombieUnitChanceOverride", -1);
+		addInteger(ss, itemRule->getConfigMelee()->ammoSpawnUnitChanceOverride, "ammoSpawnUnitChanceOverride", -1);
+		addInteger(ss, itemRule->getConfigMelee()->ammoSpawnItemChanceOverride, "ammoSpawnItemChanceOverride", -1);
 		addBoolean(ss, itemRule->getConfigMelee()->arcing, "arcing");
 		endHeading();
 	}
@@ -2236,6 +2256,7 @@ void StatsForNerdsState::initItemList()
 		addSingleString(ss, itemRule->getUfopediaType(), "ufopediaType");
 		addSingleString(ss, itemRule->getName(), "name", itemRule->getType());
 		addSingleString(ss, itemRule->getNameAsAmmo(), "nameAsAmmo");
+		addInteger(ss, itemRule->getLoadOrder(), "loadOrder");
 		addInteger(ss, itemRule->getListOrder(), "listOrder");
 		addBoolean(ss, itemRule->getHidePower(), "hidePower");
 		addBoolean(ss, itemRule->getIgnoreAmmoPower(), "ignoreAmmoPower");
@@ -2408,14 +2429,14 @@ void StatsForNerdsState::initItemList()
 
 		// flatRate*
 
-		addRuleItemUseCostFull(ss, itemRule->getFlatAimed(), "flatAimed", RuleItemUseCost(0, 1));
-		addRuleItemUseCostFull(ss, itemRule->getFlatAuto(), "flatAuto", RuleItemUseCost(0, 1));
-		addRuleItemUseCostFull(ss, itemRule->getFlatSnap(), "flatSnap", RuleItemUseCost(0, 1));
-		addRuleItemUseCostFull(ss, itemRule->getFlatMelee(), "flatMelee", RuleItemUseCost(0, 1));
-		addRuleItemUseCostFull(ss, itemRule->getFlatUse(), "flatUse", RuleItemUseCost(0, 1));
-		addRuleItemUseCostFull(ss, itemRule->getFlatThrow(), "flatThrow", RuleItemUseCost(0, 1));
-		addRuleItemUseCostFull(ss, itemRule->getFlatPrime(), "flatPrime", RuleItemUseCost(0, 1));
-		addRuleItemUseCostFull(ss, itemRule->getFlatUnprime(), "flatUnprime", RuleItemUseCost(0, 1));
+		addRuleItemUseCostFull(ss, itemRule->getFlatAimed(), "flatAimed", RuleItemUseFlat(0, 1));
+		addRuleItemUseCostFull(ss, itemRule->getFlatAuto(), "flatAuto", RuleItemUseFlat(0, 1));
+		addRuleItemUseCostFull(ss, itemRule->getFlatSnap(), "flatSnap", RuleItemUseFlat(0, 1));
+		addRuleItemUseCostFull(ss, itemRule->getFlatMelee(), "flatMelee", RuleItemUseFlat(0, 1));
+		addRuleItemUseCostFull(ss, itemRule->getFlatUse(), "flatUse", RuleItemUseFlat(0, 1));
+		addRuleItemUseCostFull(ss, itemRule->getFlatThrow(), "flatThrow", RuleItemUseFlat(0, 1));
+		addRuleItemUseCostFull(ss, itemRule->getFlatPrime(), "flatPrime", RuleItemUseFlat(0, 1));
+		addRuleItemUseCostFull(ss, itemRule->getFlatUnprime(), "flatUnprime", RuleItemUseFlat(0, 1));
 
 		addSection("{Script tags}", "", _white, true);
 		{
@@ -2882,6 +2903,7 @@ void StatsForNerdsState::initArmorList()
 		addInteger(ss, armorRule->getStandHeight(), "standHeight", -1);
 		addInteger(ss, armorRule->getKneelHeight(), "kneelHeight", -1);
 		addInteger(ss, armorRule->getFloatHeight(), "floatHeight", -1);
+		addInteger(ss, armorRule->getMeleeOriginVoxelVerticalOffset(), "meleeOriginVoxelVerticalOffset");
 		addFloat(ss, armorRule->getOverKill(), "overKill", 0.5f);
 		addBoolean(ss, armorRule->isPilotArmor(), "isPilotArmor");
 		addBoolean(ss, armorRule->getAllowTwoMainWeapons(), "allowTwoMainWeapons");
@@ -3700,10 +3722,15 @@ void StatsForNerdsState::initUfoList()
 		addSingleString(ss, ufoRule->getHitImage(), "hitImage");
 		addInteger(ss, ufoRule->getMissilePower(), "missilePower");
 		addBoolean(ss, ufoRule->isUnmanned(), "unmanned");
+		addBoolean(ss, ufoRule->isInstaHyper(), "instaHyper");
 		addInteger(ss, ufoRule->getSplashdownSurvivalChance(), "splashdownSurvivalChance", 100);
 		addInteger(ss, ufoRule->getFakeWaterLandingChance(), "fakeWaterLandingChance", 0);
 
 		addSection("{Visuals}", "", _white);
+		addInteger(ss, ufoRule->getRadius(), "radius", -1);
+		addInteger(ss, ufoRule->getDefaultVisibility(), "visibility");
+		addInteger(ss, ufoRule->getBlobSize(), "blobSize", -1);
+
 		addInteger(ss, ufoRule->getSprite(), "sprite", -1); // INTERWIN.DAT
 		addSingleString(ss, ufoRule->getModSprite(), "modSprite", "", false);
 		addInteger(ss, ufoRule->getMarker(), "marker", -1);

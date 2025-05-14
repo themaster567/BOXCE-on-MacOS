@@ -57,6 +57,7 @@ private:
 	unsigned int _timeOfLastFrame;
 	int _timeUntilNextFrame;
 	bool _ctrl, _alt, _shift, _rmb, _mmb;
+	int _scrollStep;
 	static const double VOLUME_GRADIENT;
 
 public:
@@ -102,6 +103,8 @@ public:
 	bool containsUfopaediaStartState() const;
 	/// Returns whether a NotesState is in the background.
 	bool containsNotesState() const;
+	/// Returns the GeoscapeState from the background (if available).
+	GeoscapeState* getGeoscapeState() const;
 	/// Returns whether the game is shutting down.
 	bool isQuitting() const;
 	/// Loads the default and current language.
@@ -159,8 +162,11 @@ public:
 	/// Gets the _mmb flag.
 	bool getMMBFlag() const { return _mmb; }
 
-	/// Gets the geoScapeState
-	GeoscapeState *getGeoscapeState() const;
+	/// Sets the scroll step value.
+	void setScrollStep(int newValue) { _scrollStep = newValue; }
+
+	/// Gets the scroll step value.
+	int getScrollStep() const { return _scrollStep; }
 };
 
 }
