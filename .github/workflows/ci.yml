@@ -122,6 +122,14 @@ jobs:
           cp "$SDLGFX" openxcom.app/Contents/Frameworks/
           install_name_tool -change "$SDLGFX" "@executable_path/../Frameworks/$(basename $SDLGFX)" openxcom.app/Contents/MacOS/openxcom
 
+      - name: Final clean and code-sign after all modifications
+        run: |
+          cd build
+          xattr -cr openxcom.app
+          codesign --force --deep --sign - openxcom.app
+          codesign --verify --deep --strict --verbose=2 openxcom.app
+          spctl --assess --type execute --verbose openxcom.app || echo "Gatekeeper may warn. Use right-click > Open on first launch."
+
       - name: Install create-dmg
         run: brew install create-dmg
 
