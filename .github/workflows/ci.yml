@@ -85,52 +85,76 @@ jobs:
         run: |
           ${{ env.ARCH_CMD }} cmake --build build --parallel $(( $(sysctl -n hw.ncpu) - 1 ))
 
-      - name: Create macOS app bundle with all dependencies
+      - name: Bundle libraries
         run: |
-          # Create directory for dependencies
-          mkdir -p build/Dependencies
-          
-          # Use dylibbundler to copy and fix all dependencies
-          brew install dylibbundler
-          
-          # Copy executable to a working location for dylibbundler
-          cp build/openxcom.app/Contents/MacOS/openxcom build/openxcom-exec
-          
-          # Run dylibbundler to collect all dependencies
-          dylibbundler -x build/openxcom-exec -b -d build/Dependencies -p @executable_path/../Frameworks/
-          
-          # Create Frameworks directory
+          # First create Frameworks directory
           mkdir -p build/openxcom.app/Contents/Frameworks/
           
-          # Copy all collected dependencies to the Frameworks directory
-          cp build/Dependencies/* build/openxcom.app/Contents/Frameworks/
+          # Add @rpath to the executable first so subsequent steps can use it
+          install_name_tool -add_rpath @executable_path/../Frameworks build/openxcom.app/Contents/MacOS/openxcom || true
           
-          # Copy zlib specifically (which was identified as missing)
+          # Copy critical libraries to Frameworks folder
+          echo "Copying SDL libraries..."
+          cp ${{ env.HOMEBREW_PREFIX }}/lib/libSDL-1.2.0.dylib build/openxcom.app/Contents/Frameworks/ || true
+          cp ${{ env.HOMEBREW_PREFIX }}/lib/libSDL2*.dylib build/openxcom.app/Contents/Frameworks/ || true
+          
+          echo "Copying SDL_image library..."
+          cp ${{ env.HOMEBREW_PREFIX }}/sdl12-compat/lib/libSDL_image-1.2.0.dylib build/openxcom.app/Contents/Frameworks/ || true
+          
+          echo "Copying SDL_mixer library..."
+          cp ${{ env.HOMEBREW_PREFIX }}/sdl12-compat/lib/libSDL_mixer-1.2.0.dylib build/openxcom.app/Contents/Frameworks/ || true
+          
+          echo "Copying SDL_gfx library..."
+          cp ${{ env.HOMEBREW_PREFIX }}/lib/libSDL_gfx*.dylib build/openxcom.app/Contents/Frameworks/ || true
+          
+          echo "Copying YAML-CPP library..."
+          cp ${{ env.HOMEBREW_PREFIX }}/lib/libyaml-cpp*.dylib build/openxcom.app/Contents/Frameworks/ || true
+          
+          echo "Copying zlib library..."
           cp ${{ env.HOMEBREW_PREFIX }}/opt/zlib/lib/libz.1.dylib build/openxcom.app/Contents/Frameworks/ || true
           cp /usr/lib/libz.1.dylib build/openxcom.app/Contents/Frameworks/ || true
           
-          # Fix the main executable to use @rpath for zlib
-          install_name_tool -change "/usr/lib/libz.1.dylib" "@rpath/libz.1.dylib" build/openxcom.app/Contents/MacOS/openxcom || true
+          # Copy likely dependencies for the SDL libraries
+          echo "Copying image libraries..."
+          cp ${{ env.HOMEBREW_PREFIX }}/lib/libjpeg*.dylib build/openxcom.app/Contents/Frameworks/ || true
+          cp ${{ env.HOMEBREW_PREFIX }}/lib/libpng*.dylib build/openxcom.app/Contents/Frameworks/ || true
+          cp ${{ env.HOMEBREW_PREFIX }}/lib/libtiff*.dylib build/openxcom.app/Contents/Frameworks/ || true
+          cp ${{ env.HOMEBREW_PREFIX }}/lib/libwebp*.dylib build/openxcom.app/Contents/Frameworks/ || true
           
-          # Add @rpath to the executable
-          install_name_tool -add_rpath @executable_path/../Frameworks build/openxcom.app/Contents/MacOS/openxcom || true
+          echo "Copying audio libraries..."
+          cp ${{ env.HOMEBREW_PREFIX }}/lib/libogg*.dylib build/openxcom.app/Contents/Frameworks/ || true
+          cp ${{ env.HOMEBREW_PREFIX }}/lib/libvorbis*.dylib build/openxcom.app/Contents/Frameworks/ || true
+          cp ${{ env.HOMEBREW_PREFIX }}/lib/libFLAC*.dylib build/openxcom.app/Contents/Frameworks/ || true
+          cp ${{ env.HOMEBREW_PREFIX }}/lib/libmpg123*.dylib build/openxcom.app/Contents/Frameworks/ || true
+          cp ${{ env.HOMEBREW_PREFIX }}/lib/libmodplug*.dylib build/openxcom.app/Contents/Frameworks/ || true
           
-          # Copy SDL libraries explicitly - these are critical
-          cp ${{ env.HOMEBREW_PREFIX }}/lib/libSDL-1.2.0.dylib build/openxcom.app/Contents/Frameworks/ || true
-          cp ${{ env.HOMEBREW_PREFIX }}/lib/libSDL2-2.0.0.dylib build/openxcom.app/Contents/Frameworks/ || true
-          cp ${{ env.HOMEBREW_PREFIX }}/sdl12-compat/lib/libSDL_image-1.2.0.dylib build/openxcom.app/Contents/Frameworks/ || true
-          cp ${{ env.HOMEBREW_PREFIX }}/sdl12-compat/lib/libSDL_mixer-1.2.0.dylib build/openxcom.app/Contents/Frameworks/ || true
-          cp ${{ env.HOMEBREW_PREFIX }}/lib/libSDL_gfx.15.dylib build/openxcom.app/Contents/Frameworks/ || true
-          cp ${{ env.HOMEBREW_PREFIX }}/lib/libyaml-cpp.0.7.dylib build/openxcom.app/Contents/Frameworks/ || true
+          # Use cmake's macOS bundle fixer
+          echo "Running cmake's fixup_bundle..."
+          cd build
           
-          # Fix the library IDs
-          for lib in build/openxcom.app/Contents/Frameworks/*.dylib; do
-            install_name_tool -id "@rpath/$(basename $lib)" "$lib" || true
-          done
+          # Create a small CMake script to fix up the bundle
+          cat > fix_bundle.cmake << EOL
+          include(BundleUtilities)
+          fixup_bundle("openxcom.app" "" "${{ env.HOMEBREW_PREFIX }}/lib;${{ env.HOMEBREW_PREFIX }}/sdl12-compat/lib")
+          EOL
           
-          # Print what libraries were bundled
+          # Run the script
+          cmake -P fix_bundle.cmake || true
+          
+          # List the bundled libraries
           echo "Bundled libraries:"
-          ls -la build/openxcom.app/Contents/Frameworks/
+          ls -la openxcom.app/Contents/Frameworks/
+
+      - name: Fix libz reference specifically
+        run: |
+          # Make sure the executable can find libz.1.dylib
+          if otool -L build/openxcom.app/Contents/MacOS/openxcom | grep -q '/usr/lib/libz.1.dylib'; then
+            install_name_tool -change "/usr/lib/libz.1.dylib" "@rpath/libz.1.dylib" build/openxcom.app/Contents/MacOS/openxcom || true
+          fi
+          
+          # Verify libs
+          echo "Final executable dependencies:"
+          otool -L build/openxcom.app/Contents/MacOS/openxcom
 
       - name: Fix, sign, and package the app
         run: |
