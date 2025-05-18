@@ -9,30 +9,39 @@ jobs:
   macos:
     name: macOS (${{ matrix.arch }})
     runs-on: macos-latest
+    timeout-minutes: 60  # Add timeout to avoid hung builds
     strategy:
+      fail-fast: false  # Don't cancel other jobs if one fails
       matrix:
         arch: [arm64, x86_64]
+    
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
-
+          fetch-depth: 0  # Full git history for versioning
+      
       - name: Setup environment
         run: |
           echo "DATEFILE=`git log -1 --date=format:\"%Y_%m_%d_%H%M\" --format=\"%ad\"`" >> $GITHUB_ENV
           echo "DATEVERSION=`git log -1 --date=format:\"%Y-%m-%d %H:%M\" --format=\"%ad\"`" >> $GITHUB_ENV
-          echo "CMAKE_BUILD_PARALLEL_LEVEL=`sysctl -n hw.ncpu`" >> $GITHUB_ENV
           if [[ "${{ matrix.arch }}" == "x86_64" ]]; then
             echo "ARCH_CMD=arch -x86_64" >> $GITHUB_ENV
           else
             echo "ARCH_CMD=" >> $GITHUB_ENV
           fi
+          
+          # Set Homebrew prefix based on architecture
+          if [[ "${{ matrix.arch }}" == "arm64" ]]; then
+            echo "HOMEBREW_PREFIX=/opt/homebrew" >> $GITHUB_ENV
+          else
+            echo "HOMEBREW_PREFIX=/usr/local" >> $GITHUB_ENV
+          fi
 
       - name: Setup version info
         run: |
           sed -i '' "s/OPENXCOM_VERSION_GIT \"[^\"]*\"/OPENXCOM_VERSION_GIT \" git ${{ env.DATEVERSION }}\"/" src/version.h
-          echo "FILENAME=oxce_git_${{ env.DATEFILE }}_macos_${{ matrix.arch }}" >> $GITHUB_ENV
+          echo "FILENAME=openxcom_${{ env.DATEFILE }}_macos_${{ matrix.arch }}" >> $GITHUB_ENV
 
       # Install Rosetta 2 if needed
       - name: Install Rosetta 2 (if needed)
@@ -42,7 +51,7 @@ jobs:
 
       - name: Install Homebrew dependencies
         run: |
-          # Setup Homebrew path based on architecture
+          # Setup Homebrew path
           if [[ "${{ matrix.arch }}" == "arm64" ]]; then
             eval "$(/opt/homebrew/bin/brew shellenv || true)"
           else
@@ -51,7 +60,7 @@ jobs:
           
           # Install dependencies
           ${{ env.ARCH_CMD }} brew update
-          ${{ env.ARCH_CMD }} brew install cmake pkg-config sdl12-compat sdl_gfx yaml-cpp
+          ${{ env.ARCH_CMD }} brew install cmake pkg-config sdl12-compat sdl_gfx yaml-cpp zlib
 
       # Manually install SDL_image and SDL_mixer for SDL 1.2
       - name: Install SDL_image
@@ -59,15 +68,7 @@ jobs:
           curl -LO https://www.libsdl.org/projects/SDL_image/release/SDL_image-1.2.12.tar.gz
           tar -xzf SDL_image-1.2.12.tar.gz
           cd SDL_image-1.2.12
-          
-          # Use Homebrew prefix
-          if [[ "${{ matrix.arch }}" == "arm64" ]]; then
-            export HOMEBREW_PREFIX="/opt/homebrew"
-          else
-            export HOMEBREW_PREFIX="/usr/local"
-          fi
-          
-          ${{ env.ARCH_CMD }} ./configure --prefix=${HOMEBREW_PREFIX}
+          ${{ env.ARCH_CMD }} ./configure --prefix=${{ env.HOMEBREW_PREFIX }}
           ${{ env.ARCH_CMD }} make -j$(sysctl -n hw.ncpu)
           sudo ${{ env.ARCH_CMD }} make install
 
@@ -76,60 +77,52 @@ jobs:
           curl -LO https://www.libsdl.org/projects/SDL_mixer/release/SDL_mixer-1.2.12.tar.gz
           tar -xzf SDL_mixer-1.2.12.tar.gz
           cd SDL_mixer-1.2.12
-          
-          # Use Homebrew prefix
-          if [[ "${{ matrix.arch }}" == "arm64" ]]; then
-            export HOMEBREW_PREFIX="/opt/homebrew"
-          else
-            export HOMEBREW_PREFIX="/usr/local"
-          fi
-          
-          ${{ env.ARCH_CMD }} ./configure --prefix=${HOMEBREW_PREFIX}
+          ${{ env.ARCH_CMD }} ./configure --prefix=${{ env.HOMEBREW_PREFIX }}
           ${{ env.ARCH_CMD }} make -j$(sysctl -n hw.ncpu)
           sudo ${{ env.ARCH_CMD }} make install
 
-      - name: Build OpenXcom
+      - name: Configure CMake
         run: |
-          # Set Homebrew prefix for library paths
-          if [[ "${{ matrix.arch }}" == "arm64" ]]; then
-            export HOMEBREW_PREFIX="/opt/homebrew"
-          else
-            export HOMEBREW_PREFIX="/usr/local"
-          fi
-          
-          # Build using CMake
-          ${{ env.ARCH_CMD }} cmake -B build -DCMAKE_BUILD_TYPE=Release \
+          # Configure using CMake with extra warnings to see any issues
+          ${{ env.ARCH_CMD }} cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} \
-            -DPKG_CONFIG_EXECUTABLE=${HOMEBREW_PREFIX}/bin/pkg-config
+            -DPKG_CONFIG_EXECUTABLE=${{ env.HOMEBREW_PREFIX }}/bin/pkg-config \
+            -DCMAKE_VERBOSE_MAKEFILE=ON \
+            -DCMAKE_CXX_FLAGS="-Wno-dangling-else -Wno-unused-variable"
           
-          ${{ env.ARCH_CMD }} cmake --build build --parallel $(sysctl -n hw.ncpu)
+          # Show cmake configuration
+          cat build/CMakeCache.txt
+
+      - name: Build OpenXcom (with single thread for debugging)
+        run: |
+          # Build with a single thread to see errors more clearly
+          ${{ env.ARCH_CMD }} cmake --build build --parallel 1
 
       - name: Create app bundle
+        if: success()  # Only run if build succeeds
         run: |
           # Create Frameworks directory
           mkdir -p build/openxcom.app/Contents/Frameworks
           
-          # Determine Homebrew prefix
-          if [[ "${{ matrix.arch }}" == "arm64" ]]; then
-            export HOMEBREW_PREFIX="/opt/homebrew"
-          else
-            export HOMEBREW_PREFIX="/usr/local"
-          fi
-          
           # Copy required libraries
           # SDL
-          cp ${HOMEBREW_PREFIX}/lib/libSDL*.dylib build/openxcom.app/Contents/Frameworks/
+          cp ${{ env.HOMEBREW_PREFIX }}/lib/libSDL*.dylib build/openxcom.app/Contents/Frameworks/
           # SDL_image
-          cp ${HOMEBREW_PREFIX}/lib/libSDL_image*.dylib build/openxcom.app/Contents/Frameworks/
+          cp ${{ env.HOMEBREW_PREFIX }}/lib/libSDL_image*.dylib build/openxcom.app/Contents/Frameworks/
           # SDL_mixer
-          cp ${HOMEBREW_PREFIX}/lib/libSDL_mixer*.dylib build/openxcom.app/Contents/Frameworks/
+          cp ${{ env.HOMEBREW_PREFIX }}/lib/libSDL_mixer*.dylib build/openxcom.app/Contents/Frameworks/
           # SDL_gfx
-          cp ${HOMEBREW_PREFIX}/lib/libSDL_gfx*.dylib build/openxcom.app/Contents/Frameworks/
+          cp ${{ env.HOMEBREW_PREFIX }}/lib/libSDL_gfx*.dylib build/openxcom.app/Contents/Frameworks/
           # YAML
-          cp ${HOMEBREW_PREFIX}/lib/libyaml-cpp*.dylib build/openxcom.app/Contents/Frameworks/
+          cp ${{ env.HOMEBREW_PREFIX }}/lib/libyaml-cpp*.dylib build/openxcom.app/Contents/Frameworks/
           # zlib (critical)
           cp /usr/lib/libz.1.dylib build/openxcom.app/Contents/Frameworks/ || true
-          cp ${HOMEBREW_PREFIX}/opt/zlib/lib/libz.1.dylib build/openxcom.app/Contents/Frameworks/ || true
+          cp ${{ env.HOMEBREW_PREFIX }}/opt/zlib/lib/libz.1.dylib build/openxcom.app/Contents/Frameworks/ || true
+          
+          # Check if libraries were successfully copied
+          echo "Listing bundled libraries:"
+          ls -la build/openxcom.app/Contents/Frameworks/
           
           # Add @rpath to executable
           install_name_tool -add_rpath @executable_path/../Frameworks build/openxcom.app/Contents/MacOS/openxcom
@@ -142,12 +135,14 @@ jobs:
           codesign --force --deep --sign - build/openxcom.app
 
       - name: Package app
+        if: success()  # Only run if previous steps succeed
         run: |
           mkdir -p artifacts
           cd build
           zip -r ../artifacts/${{ env.FILENAME }}.zip openxcom.app
 
       - name: Archive artifacts
+        if: success()  # Only run if previous steps succeed
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.FILENAME }}
