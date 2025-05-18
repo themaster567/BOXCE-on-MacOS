@@ -27,7 +27,9 @@ jobs:
       - name: Parse version from version.h
         id: version
         run: |
-          VERSION=$(grep OPENXCOM_VERSION_GIT src/version.h | sed 's/.*" git \(.*\)"/\1/' | tr ' :' '_')
+          VERSION_LINE=$(grep OPENXCOM_VERSION_GIT src/version.h || grep OPENXCOM_VERSION_LONG src/version.h)
+          RAW=$(echo "$VERSION_LINE" | sed -E 's/^.*" *\(?v?([0-9._-]+)\)?".*$/\1/')
+          VERSION=$(echo "$RAW" | tr -d '[:space:]')
           echo "tagname=v$VERSION" >> $GITHUB_OUTPUT
           echo "versionstr=$VERSION" >> $GITHUB_OUTPUT
 
@@ -104,7 +106,7 @@ jobs:
             -p @executable_path/../Frameworks/
           install_name_tool -add_rpath @executable_path/../Frameworks openxcom.app/Contents/MacOS/openxcom
 
-      - name: Manually bundle missing dylibs
+      - name: Manually bundle additional dylibs
         run: |
           cd build
           for LIBNAME in \
@@ -120,7 +122,7 @@ jobs:
           cp "$SDLGFX" openxcom.app/Contents/Frameworks/
           install_name_tool -change "$SDLGFX" "@executable_path/../Frameworks/$(basename $SDLGFX)" openxcom.app/Contents/MacOS/openxcom
 
-      - name: Code sign
+      - name: Code sign and clear quarantine
         run: |
           cd build
           xattr -cr openxcom.app
