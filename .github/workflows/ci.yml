@@ -1,9 +1,9 @@
-name: Nightly
+name: CI Build for macOS (x86_64 and arm64)
+
 on:
-  push:
-    branches:
-      - test
-  workflow_dispatch:  # Allow manual trigger
+  push:  # Automatically triggered for all pushes
+  pull_request:  # Automatically triggered for pull requests
+  workflow_dispatch:  # Manually triggered
 
 jobs:
   macos:
@@ -146,15 +146,6 @@ jobs:
           mkdir -p artifacts
           cd build
           zip -r ../artifacts/${{ env.FILENAME }}.zip openxcom.app
-
-      - name: Get SHA hashes
-        uses: nrwl/nx-set-shas@v4
-        with:
-          main-branch-name: test
-
-      - name: Generate build log
-        run: |
-          git log --pretty=format:"<strong>%an, %ad</strong>%n%B" -n 10 --date=iso-local ${{ env.NX_BASE }}..${{ env.NX_HEAD }} > artifacts/${{ env.FILENAME }}.log
 
       - name: Archive artifacts
         uses: actions/upload-artifact@v4
