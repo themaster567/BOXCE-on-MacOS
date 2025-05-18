@@ -29,37 +29,44 @@ jobs:
           echo "archdir=build-${{ matrix.arch }}" >> $GITHUB_OUTPUT
           echo "filename=openxcom_${DATE}_macos" >> $GITHUB_OUTPUT
 
-      - name: Set Homebrew path
+      - name: Install Rosetta for x86_64
+        if: matrix.arch == 'x86_64'
+        run: |
+          softwareupdate --install-rosetta --agree-to-license || echo "Rosetta already installed"
+
+      - name: Configure Homebrew path
         run: |
           if [[ "${{ matrix.arch }}" == "arm64" ]]; then
             echo "HOMEBREW_PREFIX=/opt/homebrew" >> $GITHUB_ENV
+            echo "SHELL_PREFIX=" >> $GITHUB_ENV
           else
             echo "HOMEBREW_PREFIX=/usr/local" >> $GITHUB_ENV
+            echo "SHELL_PREFIX=arch -x86_64" >> $GITHUB_ENV
           fi
 
       - name: Install dependencies
         run: |
           export PATH="${HOMEBREW_PREFIX}/bin:$PATH"
-          brew update
-          brew install cmake pkg-config sdl12-compat sdl_gfx yaml-cpp zlib dylibbundler ccache
+          $SHELL_PREFIX brew update
+          $SHELL_PREFIX brew install cmake pkg-config sdl12-compat sdl_gfx yaml-cpp zlib dylibbundler ccache
 
       - name: Build SDL_image
         run: |
           curl -LO https://www.libsdl.org/projects/SDL_image/release/SDL_image-1.2.12.tar.gz
           tar -xzf SDL_image-1.2.12.tar.gz
           cd SDL_image-1.2.12
-          ./configure --prefix=${HOMEBREW_PREFIX}
-          make -j$(sysctl -n hw.ncpu)
-          sudo make install
+          $SHELL_PREFIX ./configure --prefix=${HOMEBREW_PREFIX}
+          $SHELL_PREFIX make -j$(sysctl -n hw.ncpu)
+          sudo $SHELL_PREFIX make install
 
       - name: Build SDL_mixer
         run: |
           curl -LO https://www.libsdl.org/projects/SDL_mixer/release/SDL_mixer-1.2.12.tar.gz
           tar -xzf SDL_mixer-1.2.12.tar.gz
           cd SDL_mixer-1.2.12
-          ./configure --prefix=${HOMEBREW_PREFIX}
-          make -j$(sysctl -n hw.ncpu)
-          sudo make install
+          $SHELL_PREFIX ./configure --prefix=${HOMEBREW_PREFIX}
+          $SHELL_PREFIX make -j$(sysctl -n hw.ncpu)
+          sudo $SHELL_PREFIX make install
 
       - name: Set environment
         run: |
@@ -85,11 +92,12 @@ jobs:
         run: |
           mkdir ${{ steps.setup.outputs.archdir }}
           cd ${{ steps.setup.outputs.archdir }}
-          cmake .. \
+          $SHELL_PREFIX cmake .. \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=10.9 \
-            -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }}
-          make -j$(sysctl -n hw.ncpu) VERBOSE=1
+            -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} \
+            -DCMAKE_PREFIX_PATH=${HOMEBREW_PREFIX}
+          $SHELL_PREFIX make -j$(sysctl -n hw.ncpu) VERBOSE=1
 
       - name: Upload binary
         uses: actions/upload-artifact@v4
