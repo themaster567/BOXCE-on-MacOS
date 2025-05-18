@@ -1,31 +1,42 @@
-  macos:
-    name: macOS ARM64
+name: CI Build for macOS ARM64
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  macos-arm64:
+    name: Build macOS (arm64)
     runs-on: macos-14
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Setup build environment
+      - name: Set up build environment variables
+        id: setup
         run: |
-          echo "DATEFILE=$(git log -1 --date=format:'%Y_%m_%d_%H%M' --format='%ad')" >> $GITHUB_ENV
-          echo "DATEVERSION=$(git log -1 --date=format:'%Y-%m-%d %H:%M' --format='%ad')" >> $GITHUB_ENV
-          echo "FILENAME=openxcom_${{ env.DATEFILE }}_macos_arm64" >> $GITHUB_ENV
-          echo "HOMEBREW_PREFIX=/opt/homebrew" >> $GITHUB_ENV
-          echo "ARCH_CMD=" >> $GITHUB_ENV
+          DATEFILE=$(git log -1 --date=format:'%Y_%m_%d_%H%M' --format='%ad')
+          DATEVERSION=$(git log -1 --date=format:'%Y-%m-%d %H:%M' --format='%ad')
+          echo "datefile=$DATEFILE" >> $GITHUB_OUTPUT
+          echo "dateversion=$DATEVERSION" >> $GITHUB_OUTPUT
+          echo "filename=openxcom_${DATEFILE}_macos_arm64" >> $GITHUB_OUTPUT
 
       - name: Install dependencies
         run: |
-          eval "$(${HOMEBREW_PREFIX}/bin/brew shellenv)"
           brew update
           brew install cmake pkg-config sdl2 sdl2_image sdl2_mixer sdl2_gfx yaml-cpp zlib dylibbundler
 
       - name: Set zlib paths for Sonoma
         run: |
-          echo "LDFLAGS=-L${HOMEBREW_PREFIX}/opt/zlib/lib" >> $GITHUB_ENV
-          echo "CPPFLAGS=-I${HOMEBREW_PREFIX}/opt/zlib/include" >> $GITHUB_ENV
-          echo "PKG_CONFIG_PATH=${HOMEBREW_PREFIX}/opt/zlib/lib/pkgconfig" >> $GITHUB_ENV
+          echo "LDFLAGS=-L/opt/homebrew/opt/zlib/lib" >> $GITHUB_ENV
+          echo "CPPFLAGS=-I/opt/homebrew/opt/zlib/include" >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=/opt/homebrew/opt/zlib/lib/pkgconfig" >> $GITHUB_ENV
 
       - name: Configure and build with CMake
         env:
@@ -40,39 +51,42 @@
                    -DCMAKE_OSX_ARCHITECTURES=arm64
           make -j$(sysctl -n hw.ncpu)
 
-      - name: Bundle dependencies
+      - name: Bundle libraries with dylibbundler
         run: |
           cd build
           mkdir -p openxcom.app/Contents/Frameworks
           dylibbundler -od -b -x openxcom.app/Contents/MacOS/openxcom \
             -d openxcom.app/Contents/Frameworks \
             -p @executable_path/../Frameworks/
-
-          # Add rpath to find local Frameworks
           install_name_tool -add_rpath @executable_path/../Frameworks openxcom.app/Contents/MacOS/openxcom
 
-          # Sign app for macOS Gatekeeper
+      - name: Code sign and remove quarantine
+        run: |
+          cd build
           xattr -cr openxcom.app
           codesign --force --deep --sign - openxcom.app
+          xattr -d com.apple.quarantine openxcom.app || true
 
       - name: Create README
         run: |
+          mkdir -p build
           cat > build/README.txt << 'EOL'
-          OpenXcom Extended - macOS ARM64 Build
+          OpenXcom Extended - macOS ARM64
 
-          To run the game:
-          - Move openxcom.app to /Applications or another folder
-          - Right-click > Open once to bypass Apple security warning
-          - Or: xattr -d com.apple.quarantine /path/to/openxcom.app
+          First run:
+          - Right-click the app and select "Open" to bypass the security prompt.
+          - Or run: xattr -d com.apple.quarantine /path/to/openxcom.app
+
+          Game assets required (UFO/TFTD folders) in standard location.
           EOL
 
-      - name: Package build
+      - name: Package app
         run: |
           cd build
-          zip -r "${{ env.FILENAME }}.zip" openxcom.app README.txt
+          zip -r "${{ steps.setup.outputs.filename }}.zip" openxcom.app README.txt
 
-      - name: Upload artifact
+      - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.FILENAME }}
-          path: build/${{ env.FILENAME }}.zip
+          name: ${{ steps.setup.outputs.filename }}
+          path: build/${{ steps.setup.outputs.filename }}.zip
