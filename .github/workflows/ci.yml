@@ -2,9 +2,8 @@ name: CI Build for macOS ARM64
 
 on:
   push:
-    branches: [ main ]
+    branches: [ '**' ]
   pull_request:
-    branches: [ main ]
   workflow_dispatch:
 
 jobs:
@@ -22,9 +21,7 @@ jobs:
         id: setup
         run: |
           DATEFILE=$(git log -1 --date=format:'%Y_%m_%d_%H%M' --format='%ad')
-          DATEVERSION=$(git log -1 --date=format:'%Y-%m-%d %H:%M' --format='%ad')
           echo "datefile=$DATEFILE" >> $GITHUB_OUTPUT
-          echo "dateversion=$DATEVERSION" >> $GITHUB_OUTPUT
           echo "filename=openxcom_${DATEFILE}_macos_arm64" >> $GITHUB_OUTPUT
 
       - name: Install dependencies via Homebrew
@@ -78,44 +75,24 @@ jobs:
             -p @executable_path/../Frameworks/
           install_name_tool -add_rpath @executable_path/../Frameworks openxcom.app/Contents/MacOS/openxcom
 
-      - name: Bundle libSDL-1.2.0.dylib
+      - name: Bundle dynamic libraries manually
         run: |
           cd build
-          LIB=$(find /opt/homebrew/lib -name "libSDL-1.2.0.dylib" | head -n 1)
-          cp "$LIB" openxcom.app/Contents/Frameworks/
-          install_name_tool -change "$LIB" "@executable_path/../Frameworks/libSDL-1.2.0.dylib" openxcom.app/Contents/MacOS/openxcom
 
-      - name: Bundle libz.1.dylib
-        run: |
-          cd build
-          LIB=$(find /opt/homebrew/opt/zlib/lib -name "libz.1.dylib" | head -n 1)
-          cp "$LIB" openxcom.app/Contents/Frameworks/
-          install_name_tool -change "$LIB" "@executable_path/../Frameworks/libz.1.dylib" openxcom.app/Contents/MacOS/openxcom
+          for LIBNAME in \
+            libSDL-1.2.0.dylib \
+            libz.1.dylib \
+            libSDL_image-1.2.0.dylib \
+            libSDL_mixer-1.2.0.dylib; do
 
-      - name: Bundle libSDL_image-1.2.0.dylib
-        run: |
-          cd build
-          LIB=$(find /opt/homebrew/lib -name "libSDL_image-1.2.0.dylib" | head -n 1)
-          cp "$LIB" openxcom.app/Contents/Frameworks/
-          install_name_tool -change "$LIB" "@executable_path/../Frameworks/libSDL_image-1.2.0.dylib" openxcom.app/Contents/MacOS/openxcom
+            SRC=$(find /opt/homebrew/lib /opt/homebrew/opt/zlib/lib -name "$LIBNAME" | head -n 1)
+            cp "$SRC" openxcom.app/Contents/Frameworks/
+            install_name_tool -change "$SRC" "@executable_path/../Frameworks/$LIBNAME" openxcom.app/Contents/MacOS/openxcom
+          done
 
-      - name: Bundle libSDL_mixer-1.2.0.dylib
-        run: |
-          cd build
-          LIB=$(find /opt/homebrew/lib -name "libSDL_mixer-1.2.0.dylib" | head -n 1)
-          cp "$LIB" openxcom.app/Contents/Frameworks/
-          install_name_tool -change "$LIB" "@executable_path/../Frameworks/libSDL_mixer-1.2.0.dylib" openxcom.app/Contents/MacOS/openxcom
-
-      - name: Bundle libSDL_gfx.dylib
-        run: |
-          cd build
-          LIB=$(find /opt/homebrew/lib -name "libSDL_gfx*.dylib" | head -n 1)
-          cp "$LIB" openxcom.app/Contents/Frameworks/
-          install_name_tool -change "$LIB" "@executable_path/../Frameworks/$(basename $LIB)" openxcom.app/Contents/MacOS/openxcom
-
-      - name: Inspect linked libraries
-        run: |
-          otool -L build/openxcom.app/Contents/MacOS/openxcom
+          SDLGFX=$(find /opt/homebrew/lib -name "libSDL_gfx*.dylib" | head -n 1)
+          cp "$SDLGFX" openxcom.app/Contents/Frameworks/
+          install_name_tool -change "$SDLGFX" "@executable_path/../Frameworks/$(basename $SDLGFX)" openxcom.app/Contents/MacOS/openxcom
 
       - name: Code sign and remove quarantine
         run: |
@@ -124,26 +101,27 @@ jobs:
           codesign --force --deep --sign - openxcom.app
           xattr -d com.apple.quarantine openxcom.app || true
 
-      - name: Create README
+      - name: Install create-dmg
         run: |
-          mkdir -p build
-          cat > build/README.txt << 'EOL'
-          OpenXcom Extended - macOS ARM64
+          brew install create-dmg
 
-          First run:
-          - Right-click the app and select "Open" to bypass the security prompt.
-          - Or run: xattr -d com.apple.quarantine /path/to/openxcom.app
-
-          Game assets required (UFO/TFTD folders) in standard location.
-          EOL
-
-      - name: Package app
+      - name: Create DMG
         run: |
           cd build
-          zip -r "${{ steps.setup.outputs.filename }}.zip" openxcom.app README.txt
+          mkdir dist
+          create-dmg \
+            --volname "OpenXcom Extended" \
+            --window-pos 200 120 \
+            --window-size 600 300 \
+            --icon-size 100 \
+            --icon "openxcom.app" 175 120 \
+            --hide-extension "openxcom.app" \
+            --app-drop-link 425 120 \
+            "openxcom_${{ steps.setup.outputs.datefile }}.dmg" \
+            "."
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.setup.outputs.filename }}
-          path: build/${{ steps.setup.outputs.filename }}.zip
+          name: ${{ steps.setup.outputs.filename }}.dmg
+          path: build/openxcom_${{ steps.setup.outputs.datefile }}.dmg
