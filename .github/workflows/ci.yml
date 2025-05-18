@@ -78,6 +78,26 @@ jobs:
             -p @executable_path/../Frameworks/
           install_name_tool -add_rpath @executable_path/../Frameworks openxcom.app/Contents/MacOS/openxcom
 
+      - name: Manually copy libSDL-1.2.0.dylib (sdl12-compat) into bundle
+        run: |
+          cd build
+          SDL12_LIB=$(find /opt/homebrew/lib -name "libSDL-1.2.0.dylib" | head -n 1)
+
+          if [ -f "$SDL12_LIB" ]; then
+            echo "Found SDL 1.2 shim: $SDL12_LIB"
+            cp "$SDL12_LIB" openxcom.app/Contents/Frameworks/
+            install_name_tool -change "$SDL12_LIB" \
+              "@executable_path/../Frameworks/libSDL-1.2.0.dylib" \
+              openxcom.app/Contents/MacOS/openxcom
+          else
+            echo "Error: Could not find libSDL-1.2.0.dylib"
+            exit 1
+          fi
+
+      - name: Inspect linked libraries
+        run: |
+          otool -L build/openxcom.app/Contents/MacOS/openxcom
+
       - name: Code sign and remove quarantine
         run: |
           cd build
