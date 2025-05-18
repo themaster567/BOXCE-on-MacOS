@@ -1,199 +1,78 @@
-name: CI Build for macOS (x86_64 and arm64)
-
-on:
-  push:  # Automatically triggered for all pushes
-  pull_request:  # Automatically triggered for pull requests
-  workflow_dispatch:  # Manually triggered
-
-jobs:
   macos:
-    name: macOS (${{ matrix.arch }})
-    runs-on: macos-latest
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [arm64, x86_64]
-    
+    name: macOS ARM64
+    runs-on: macos-14
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      
-      - name: Setup environment
-        run: |
-          echo "DATEFILE=`git log -1 --date=format:\"%Y_%m_%d_%H%M\" --format=\"%ad\"`" >> $GITHUB_ENV
-          echo "DATEVERSION=`git log -1 --date=format:\"%Y-%m-%d %H:%M\" --format=\"%ad\"`" >> $GITHUB_ENV
-          if [[ "${{ matrix.arch }}" == "x86_64" ]]; then
-            echo "ARCH_CMD=arch -x86_64" >> $GITHUB_ENV
-          else
-            echo "ARCH_CMD=" >> $GITHUB_ENV
-          fi
-          
-          # Set Homebrew prefix based on architecture
-          if [[ "${{ matrix.arch }}" == "arm64" ]]; then
-            echo "HOMEBREW_PREFIX=/opt/homebrew" >> $GITHUB_ENV
-          else
-            echo "HOMEBREW_PREFIX=/usr/local" >> $GITHUB_ENV
-          fi
 
-      - name: Setup version info
+      - name: Setup build environment
         run: |
-          sed -i '' "s/OPENXCOM_VERSION_GIT \"[^\"]*\"/OPENXCOM_VERSION_GIT \" git ${{ env.DATEVERSION }}\"/" src/version.h
-          echo "FILENAME=openxcom_${{ env.DATEFILE }}_macos_${{ matrix.arch }}" >> $GITHUB_ENV
+          echo "DATEFILE=$(git log -1 --date=format:'%Y_%m_%d_%H%M' --format='%ad')" >> $GITHUB_ENV
+          echo "DATEVERSION=$(git log -1 --date=format:'%Y-%m-%d %H:%M' --format='%ad')" >> $GITHUB_ENV
+          echo "FILENAME=openxcom_${{ env.DATEFILE }}_macos_arm64" >> $GITHUB_ENV
+          echo "HOMEBREW_PREFIX=/opt/homebrew" >> $GITHUB_ENV
+          echo "ARCH_CMD=" >> $GITHUB_ENV
 
-      # Install Rosetta 2 if needed
-      - name: Install Rosetta 2 (if needed)
-        if: matrix.arch == 'x86_64'
+      - name: Install dependencies
         run: |
-          softwareupdate --install-rosetta --agree-to-license || echo "Rosetta already installed"
+          eval "$(${HOMEBREW_PREFIX}/bin/brew shellenv)"
+          brew update
+          brew install cmake pkg-config sdl2 sdl2_image sdl2_mixer sdl2_gfx yaml-cpp zlib dylibbundler
 
-      - name: Install Homebrew dependencies
+      - name: Set zlib paths for Sonoma
         run: |
-          # Setup Homebrew path
-          if [[ "${{ matrix.arch }}" == "arm64" ]]; then
-            eval "$(/opt/homebrew/bin/brew shellenv || true)"
-          else
-            eval "$(/usr/local/bin/brew shellenv || true)"
-          fi
-          
-          # Install dependencies
-          ${{ env.ARCH_CMD }} brew update
-          ${{ env.ARCH_CMD }} brew install --formula cmake pkg-config sdl12-compat sdl2 sdl_gfx yaml-cpp zlib dylibbundler || true
-          
-          # Verify SDL2 installation
-          echo "SDL2 library location:"
-          ${{ env.ARCH_CMD }} brew info sdl2 | grep Cellar
-          ${{ env.ARCH_CMD }} find ${{ env.HOMEBREW_PREFIX }}/lib -name "libSDL2*dylib"
+          echo "LDFLAGS=-L${HOMEBREW_PREFIX}/opt/zlib/lib" >> $GITHUB_ENV
+          echo "CPPFLAGS=-I${HOMEBREW_PREFIX}/opt/zlib/include" >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=${HOMEBREW_PREFIX}/opt/zlib/lib/pkgconfig" >> $GITHUB_ENV
 
-      # Manually install SDL_image and SDL_mixer for SDL 1.2
-      - name: Install SDL_image
+      - name: Configure and build with CMake
+        env:
+          LDFLAGS: ${{ env.LDFLAGS }}
+          CPPFLAGS: ${{ env.CPPFLAGS }}
+          PKG_CONFIG_PATH: ${{ env.PKG_CONFIG_PATH }}
         run: |
-          curl -LO https://www.libsdl.org/projects/SDL_image/release/SDL_image-1.2.12.tar.gz
-          tar -xzf SDL_image-1.2.12.tar.gz
-          cd SDL_image-1.2.12
-          ${{ env.ARCH_CMD }} ./configure --prefix=${{ env.HOMEBREW_PREFIX }}
-          ${{ env.ARCH_CMD }} make -j$(sysctl -n hw.ncpu)
-          sudo ${{ env.ARCH_CMD }} make install
+          mkdir build
+          cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release \
+                   -DCMAKE_OSX_DEPLOYMENT_TARGET=10.9 \
+                   -DCMAKE_OSX_ARCHITECTURES=arm64
+          make -j$(sysctl -n hw.ncpu)
 
-      - name: Install SDL_mixer
+      - name: Bundle dependencies
         run: |
-          curl -LO https://www.libsdl.org/projects/SDL_mixer/release/SDL_mixer-1.2.12.tar.gz
-          tar -xzf SDL_mixer-1.2.12.tar.gz
-          cd SDL_mixer-1.2.12
-          ${{ env.ARCH_CMD }} ./configure --prefix=${{ env.HOMEBREW_PREFIX }}
-          ${{ env.ARCH_CMD }} make -j$(sysctl -n hw.ncpu)
-          sudo ${{ env.ARCH_CMD }} make install
-
-      - name: Configure CMake
-        run: |
-          ${{ env.ARCH_CMD }} cmake -B build \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} \
-            -DPKG_CONFIG_EXECUTABLE=${{ env.HOMEBREW_PREFIX }}/bin/pkg-config \
-            -DCMAKE_CXX_FLAGS="-Wno-dangling-else -Wno-unused-variable" \
-            -DSDL2_DIR=${{ env.HOMEBREW_PREFIX }}/lib
-
-      - name: Build OpenXcom
-        run: |
-          ${{ env.ARCH_CMD }} cmake --build build --parallel $(sysctl -n hw.ncpu)
-
-      - name: Bundle dependencies using dylibbundler
-        run: |
-          # Analyze what libraries are needed
-          echo "Analyzing executable dependencies..."
-          otool -L build/openxcom.app/Contents/MacOS/openxcom
-          
-          # Create Frameworks directory
-          mkdir -p build/openxcom.app/Contents/Frameworks
-          
-          # Use dylibbundler to bundle all dependencies
-          ${{ env.ARCH_CMD }} dylibbundler -od -b -x build/openxcom.app/Contents/MacOS/openxcom \
-            -d build/openxcom.app/Contents/Frameworks/ \
+          cd build
+          mkdir -p openxcom.app/Contents/Frameworks
+          dylibbundler -od -b -x openxcom.app/Contents/MacOS/openxcom \
+            -d openxcom.app/Contents/Frameworks \
             -p @executable_path/../Frameworks/
-          
-          # Explicitly copy SDL2 library
-          echo "Copying SDL2 library..."
-          SDL2_LIB=$(${{ env.ARCH_CMD }} find ${{ env.HOMEBREW_PREFIX }}/lib -name "libSDL2-2.0.0.dylib" | head -n 1)
-          cp "$SDL2_LIB" build/openxcom.app/Contents/Frameworks/
-          install_name_tool -id "@rpath/libSDL2-2.0.0.dylib" build/openxcom.app/Contents/Frameworks/libSDL2-2.0.0.dylib
-          install_name_tool -change "$SDL2_LIB" "@rpath/libSDL2-2.0.0.dylib" build/openxcom.app/Contents/MacOS/openxcom
-          
-          # Copy zlib as well
-          cp "/usr/lib/libz.1.dylib" build/openxcom.app/Contents/Frameworks/ || true
-          cp "${{ env.HOMEBREW_PREFIX }}/opt/zlib/lib/libz.1.dylib" build/openxcom.app/Contents/Frameworks/ || true
-          install_name_tool -change "/usr/lib/libz.1.dylib" "@rpath/libz.1.dylib" build/openxcom.app/Contents/MacOS/openxcom || true
-          
-          # Add @rpath to the executable
-          install_name_tool -add_rpath @executable_path/../Frameworks build/openxcom.app/Contents/MacOS/openxcom
-          
-          # List the bundled libraries
-          echo "Libraries in Frameworks directory:"
-          ls -la build/openxcom.app/Contents/Frameworks/
-          
-          # Fix permissions
-          chmod -R 755 build/openxcom.app
-          
-          # First clear all extended attributes
-          xattr -cr build/openxcom.app
-          
-          # Sign the app with proper entitlements
-          codesign --force --deep --sign - build/openxcom.app
-          
-          # Explicitly remove quarantine attribute
-          xattr -d com.apple.quarantine build/openxcom.app 2>/dev/null || true
-          
-          # Verify no quarantine attribute remains
-          echo "Checking for quarantine attribute:"
-          xattr -l build/openxcom.app || echo "No extended attributes found (good)"
-          
-          # Verify final dependencies
-          echo "Final executable dependencies:"
-          otool -L build/openxcom.app/Contents/MacOS/openxcom
 
-      # Create a README with instructions for running the app
-      - name: Create README with instructions
+          # Add rpath to find local Frameworks
+          install_name_tool -add_rpath @executable_path/../Frameworks openxcom.app/Contents/MacOS/openxcom
+
+          # Sign app for macOS Gatekeeper
+          xattr -cr openxcom.app
+          codesign --force --deep --sign - openxcom.app
+
+      - name: Create README
         run: |
           cat > build/README.txt << 'EOL'
-          OpenXcom Extended for macOS
-          ===========================
-          
-          Installation Instructions
-          ------------------------
-          1. Extract the openxcom.app from this archive
-          2. Move it to your Applications folder or any location of your choice
-          
-          First Run Instructions
-          --------------------
-          When running the app for the first time, you may see a security warning about 
-          the app being from an "unidentified developer".
-          
-          To run the app, you can either:
-          
-          Option 1: Right-click (or Control-click) the app icon and select "Open" from the menu.
-                   Click "Open" in the dialog that appears.
-          
-          Option 2: Open Terminal and run this command:
-                   xattr -d com.apple.quarantine /path/to/openxcom.app
-                   
-                   (Replace /path/to/openxcom.app with the actual path to the app)
-          
-          This only needs to be done once.
-          
-          Enjoy OpenXcom Extended!
+          OpenXcom Extended - macOS ARM64 Build
+
+          To run the game:
+          - Move openxcom.app to /Applications or another folder
+          - Right-click > Open once to bypass Apple security warning
+          - Or: xattr -d com.apple.quarantine /path/to/openxcom.app
           EOL
 
-      # Create a single zip file directly from the app bundle and README
-      - name: Package app bundle
+      - name: Package build
         run: |
           cd build
           zip -r "${{ env.FILENAME }}.zip" openxcom.app README.txt
 
-      # Upload the single zip file
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.FILENAME }}
           path: build/${{ env.FILENAME }}.zip
-          compression-level: 0  # No additional compression
