@@ -148,6 +148,13 @@ jobs:
           echo "Files in Frameworks directory:"
           ls -la build/openxcom.app/Contents/Frameworks/
 
+      - name: Remove code signatures from libraries
+        run: |
+          # First remove any existing code signatures from libraries
+          sudo xattr -cr build/openxcom.app/Contents/Frameworks/*.dylib
+          # Remove signatures from executable as well
+          sudo xattr -cr build/openxcom.app/Contents/MacOS/openxcom
+
       - name: Fix library paths with install_name_tool
         run: |
           cd build/openxcom.app/Contents/Frameworks/
@@ -160,7 +167,7 @@ jobs:
             INSTALL_NAME=$(otool -D "$lib" | tail -n 1)
             
             # Fix the ID of the library to use @rpath
-            install_name_tool -id "@rpath/$(basename $lib)" "$lib" || true
+            install_name_tool -id "@rpath/$(basename $lib)" "$lib" || echo "Failed to change ID for $lib"
             
             # Get the dependencies of the library
             DEPS=$(otool -L "$lib" | tail -n +2 | awk '{print $1}' | grep -v '@rpath' | grep -v '/System/' | grep -v '/usr/lib/')
@@ -170,45 +177,43 @@ jobs:
               # If the dependency is from Homebrew or is one of our libraries
               BASE_NAME=$(basename "$dep")
               # Change the path to use @rpath
-              install_name_tool -change "$dep" "@rpath/$BASE_NAME" "$lib" || true
+              install_name_tool -change "$dep" "@rpath/$BASE_NAME" "$lib" || echo "Failed to change $dep in $lib"
             done
           done
           
           # Fix the main executable as well
           cd ../MacOS
           MAIN_EXE="openxcom"
+          
+          # Get all dependencies that need to be fixed
           DEPS=$(otool -L "$MAIN_EXE" | tail -n +2 | awk '{print $1}' | grep -v '@rpath' | grep -v '/System/' | grep -v '/usr/lib/')
           
           # Fix each dependency
           for dep in $DEPS; do
             BASE_NAME=$(basename "$dep")
             # Change the path to use @rpath
-            install_name_tool -change "$dep" "@rpath/$BASE_NAME" "$MAIN_EXE" || true
+            install_name_tool -change "$dep" "@rpath/$BASE_NAME" "$MAIN_EXE" || echo "Failed to change $dep in $MAIN_EXE"
           done
           
-          # Also fix system library references to use @rpath
-          SYSTEM_DEPS=$(otool -L "$MAIN_EXE" | grep '/usr/lib/libz.1.dylib' | awk '{print $1}')
-          for dep in $SYSTEM_DEPS; do
-            BASE_NAME=$(basename "$dep")
-            # Change the path to use @rpath
-            install_name_tool -change "$dep" "@rpath/$BASE_NAME" "$MAIN_EXE" || true
-          done
+          # Fix libz.1.dylib specifically, which is a system library but needs to be bundled
+          if otool -L "$MAIN_EXE" | grep -q '/usr/lib/libz.1.dylib'; then
+            install_name_tool -change "/usr/lib/libz.1.dylib" "@rpath/libz.1.dylib" "$MAIN_EXE" || echo "Failed to change libz.1.dylib in $MAIN_EXE"
+          fi
 
-      - name: Fix, sign, and package the app
+      - name: Add rpaths and finalize app
         run: |
           # Add @rpath to the binary
-          install_name_tool -add_rpath @executable_path/../Frameworks build/openxcom.app/Contents/MacOS/openxcom || true
+          install_name_tool -add_rpath @executable_path/../Frameworks build/openxcom.app/Contents/MacOS/openxcom || echo "Failed to add rpath"
           
           # Also add system paths as fallbacks
-          install_name_tool -add_rpath /usr/lib build/openxcom.app/Contents/MacOS/openxcom || true
-          install_name_tool -add_rpath /usr/local/lib build/openxcom.app/Contents/MacOS/openxcom || true
+          install_name_tool -add_rpath /usr/lib build/openxcom.app/Contents/MacOS/openxcom || echo "Failed to add /usr/lib rpath"
+          install_name_tool -add_rpath ${{ env.HOMEBREW_PREFIX }}/lib build/openxcom.app/Contents/MacOS/openxcom || echo "Failed to add Homebrew lib rpath"
           
           # Check all dependencies
           echo "Final executable dependencies:"
           otool -L build/openxcom.app/Contents/MacOS/openxcom
           
-          # Fix extended attributes and sign
-          sudo xattr -cr build/openxcom.app
+          # Sign the app
           codesign --force --deep --sign - build/openxcom.app
           
           # Package the app
