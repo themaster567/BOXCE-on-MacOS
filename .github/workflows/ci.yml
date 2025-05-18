@@ -60,17 +60,22 @@ jobs:
             git push --delete origin "$tag"
           done
 
-      - name: Install dependencies
+      - name: Install base dependencies
         run: |
           brew update
           brew install cmake pkg-config sdl12-compat sdl_gfx yaml-cpp zlib dylibbundler
 
-      - name: Build SDL_image
+      - name: Install optional image libraries
+        run: |
+          brew install giflib libpng libjpeg-turbo
+
+      - name: Build SDL_image (linked to optional libs)
         run: |
           curl -LO https://www.libsdl.org/projects/SDL_image/release/SDL_image-1.2.12.tar.gz
           tar -xzf SDL_image-1.2.12.tar.gz
           cd SDL_image-1.2.12
           ./configure --prefix=/opt/homebrew
+          make clean
           make -j$(sysctl -n hw.ncpu)
           sudo make install
 
