@@ -27,7 +27,7 @@ jobs:
       - name: Install dependencies via Homebrew
         run: |
           brew update
-          brew install cmake pkg-config sdl12-compat sdl_gfx yaml-cpp zlib dylibbundler
+          brew install cmake pkg-config sdl12-compat sdl_gfx yaml-cpp zlib dylibbundler ccache
 
       - name: Build SDL_image 1.2.12 manually
         run: |
@@ -52,18 +52,25 @@ jobs:
           echo "LDFLAGS=-L/opt/homebrew/opt/zlib/lib" >> $GITHUB_ENV
           echo "CPPFLAGS=-I/opt/homebrew/opt/zlib/include" >> $GITHUB_ENV
           echo "PKG_CONFIG_PATH=/opt/homebrew/lib/pkgconfig" >> $GITHUB_ENV
+          echo "CMAKE_C_COMPILER_LAUNCHER=ccache" >> $GITHUB_ENV
+          echo "CMAKE_CXX_COMPILER_LAUNCHER=ccache" >> $GITHUB_ENV
 
       - name: Configure and build with CMake
         env:
           LDFLAGS: ${{ env.LDFLAGS }}
           CPPFLAGS: ${{ env.CPPFLAGS }}
           PKG_CONFIG_PATH: ${{ env.PKG_CONFIG_PATH }}
+          CMAKE_C_COMPILER_LAUNCHER: ccache
+          CMAKE_CXX_COMPILER_LAUNCHER: ccache
         run: |
           mkdir build
           cd build
-          cmake .. -DCMAKE_BUILD_TYPE=Release \
-                   -DCMAKE_OSX_DEPLOYMENT_TARGET=10.9 \
-                   -DCMAKE_OSX_ARCHITECTURES=arm64
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.9 \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DBUILD_TESTING=OFF \
+            -DDOXYGEN_FOUND=FALSE
           make -j$(sysctl -n hw.ncpu)
 
       - name: Bundle libraries with dylibbundler
@@ -75,7 +82,7 @@ jobs:
             -p @executable_path/../Frameworks/
           install_name_tool -add_rpath @executable_path/../Frameworks openxcom.app/Contents/MacOS/openxcom
 
-      - name: Bundle dynamic libraries manually
+      - name: Bundle all manually linked libraries
         run: |
           cd build
 
