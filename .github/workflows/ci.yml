@@ -58,9 +58,14 @@ jobs:
             eval "$(/usr/local/bin/brew shellenv || true)"
           fi
           
-          # Install dependencies with formula flag to avoid warnings
+          # Install dependencies
           ${{ env.ARCH_CMD }} brew update
-          ${{ env.ARCH_CMD }} brew install --formula cmake pkg-config sdl12-compat sdl_gfx yaml-cpp zlib dylibbundler || true
+          ${{ env.ARCH_CMD }} brew install --formula cmake pkg-config sdl12-compat sdl2 sdl_gfx yaml-cpp zlib dylibbundler || true
+          
+          # Verify SDL2 installation
+          echo "SDL2 library location:"
+          ${{ env.ARCH_CMD }} brew info sdl2 | grep Cellar
+          ${{ env.ARCH_CMD }} find ${{ env.HOMEBREW_PREFIX }}/lib -name "libSDL2*dylib"
 
       # Manually install SDL_image and SDL_mixer for SDL 1.2
       - name: Install SDL_image
@@ -87,134 +92,103 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} \
             -DPKG_CONFIG_EXECUTABLE=${{ env.HOMEBREW_PREFIX }}/bin/pkg-config \
-            -DCMAKE_CXX_FLAGS="-Wno-dangling-else -Wno-unused-variable"
+            -DCMAKE_CXX_FLAGS="-Wno-dangling-else -Wno-unused-variable" \
+            -DSDL2_DIR=${{ env.HOMEBREW_PREFIX }}/lib
 
       - name: Build OpenXcom
         run: |
           ${{ env.ARCH_CMD }} cmake --build build --parallel $(sysctl -n hw.ncpu)
 
-      - name: Create app bundle with all dependencies
+      - name: Bundle dependencies using dylibbundler
         run: |
-          # Make a temporary copy of the executable for analysis
-          mkdir -p tmp
-          cp build/openxcom.app/Contents/MacOS/openxcom tmp/
+          # Analyze what libraries are needed
+          echo "Analyzing executable dependencies..."
+          otool -L build/openxcom.app/Contents/MacOS/openxcom
           
-          # Analyze executable dependencies
-          echo "Main executable dependencies:"
-          otool -L tmp/openxcom
+          # Create Frameworks directory
+          mkdir -p build/openxcom.app/Contents/Frameworks
           
-          # Create Frameworks directory with proper permissions
-          sudo mkdir -p build/openxcom.app/Contents/Frameworks
-          sudo chmod 755 build/openxcom.app/Contents/Frameworks
+          # Use dylibbundler to bundle all dependencies
+          ${{ env.ARCH_CMD }} dylibbundler -od -b -x build/openxcom.app/Contents/MacOS/openxcom \
+            -d build/openxcom.app/Contents/Frameworks/ \
+            -p @executable_path/../Frameworks/
           
-          # Now use a shell script to find and copy all dependencies recursively
-          cat > copy_dependencies.sh << 'EOL'
-          #!/bin/bash
+          # Explicitly copy SDL2 library
+          echo "Copying SDL2 library..."
+          SDL2_LIB=$(${{ env.ARCH_CMD }} find ${{ env.HOMEBREW_PREFIX }}/lib -name "libSDL2-2.0.0.dylib" | head -n 1)
+          cp "$SDL2_LIB" build/openxcom.app/Contents/Frameworks/
+          install_name_tool -id "@rpath/libSDL2-2.0.0.dylib" build/openxcom.app/Contents/Frameworks/libSDL2-2.0.0.dylib
+          install_name_tool -change "$SDL2_LIB" "@rpath/libSDL2-2.0.0.dylib" build/openxcom.app/Contents/MacOS/openxcom
           
-          # Parameters
-          APP_PATH="build/openxcom.app"
-          FRAMEWORKS_PATH="${APP_PATH}/Contents/Frameworks"
-          
-          # Create a function to copy a library and all its dependencies
-          function copy_lib_and_deps() {
-            local lib_path="$1"
-            local lib_name=$(basename "$lib_path")
-            
-            # Skip system libraries
-            if [[ "$lib_path" == /System/* || "$lib_path" == /usr/lib/* ]]; then
-              echo "Skipping system library: $lib_path"
-              return
-            fi
-            
-            # Skip if already copied
-            if [[ -f "${FRAMEWORKS_PATH}/${lib_name}" ]]; then
-              echo "Already copied: $lib_name"
-              return
-            fi
-            
-            echo "Copying: $lib_path"
-            # Copy the library
-            sudo cp -f "$lib_path" "${FRAMEWORKS_PATH}/"
-            
-            # Set the library ID
-            sudo install_name_tool -id "@rpath/$lib_name" "${FRAMEWORKS_PATH}/${lib_name}"
-            
-            # Get dependencies of this library
-            local deps=$(otool -L "$lib_path" | tail -n +2 | awk '{print $1}' | grep -v '@rpath' | grep -v '/System/' | grep -v '/usr/lib/')
-            
-            # Process each dependency
-            for dep in $deps; do
-              # Skip self-references
-              if [[ "$dep" == "$lib_path" ]]; then
-                continue
-              fi
-              
-              # Copy the dependency
-              copy_lib_and_deps "$dep"
-              
-              # Fix the reference in the current library
-              local dep_name=$(basename "$dep")
-              sudo install_name_tool -change "$dep" "@rpath/$dep_name" "${FRAMEWORKS_PATH}/${lib_name}"
-            done
-          }
-          
-          # Start with the main executable
-          MAIN_EXE="${APP_PATH}/Contents/MacOS/openxcom"
-          
-          # Get dependencies of the main executable
-          DEPS=$(otool -L "$MAIN_EXE" | tail -n +2 | awk '{print $1}' | grep -v '@rpath' | grep -v '/System/' | grep -v '/usr/lib/')
-          
-          # Process each dependency
-          for dep in $DEPS; do
-            copy_lib_and_deps "$dep"
-            
-            # Fix the reference in the main executable
-            dep_name=$(basename "$dep")
-            sudo install_name_tool -change "$dep" "@rpath/$dep_name" "$MAIN_EXE"
-          done
-          
-          # Special handling for zlib which is a system library but needs to be bundled
-          if otool -L "$MAIN_EXE" | grep -q '/usr/lib/libz.1.dylib'; then
-            echo "Handling special case for zlib..."
-            if [[ -f "/usr/lib/libz.1.dylib" ]]; then
-              sudo cp -f "/usr/lib/libz.1.dylib" "${FRAMEWORKS_PATH}/"
-              sudo install_name_tool -change "/usr/lib/libz.1.dylib" "@rpath/libz.1.dylib" "$MAIN_EXE"
-            fi
-          fi
+          # Copy zlib as well
+          cp "/usr/lib/libz.1.dylib" build/openxcom.app/Contents/Frameworks/ || true
+          cp "${{ env.HOMEBREW_PREFIX }}/opt/zlib/lib/libz.1.dylib" build/openxcom.app/Contents/Frameworks/ || true
+          install_name_tool -change "/usr/lib/libz.1.dylib" "@rpath/libz.1.dylib" build/openxcom.app/Contents/MacOS/openxcom || true
           
           # Add @rpath to the executable
-          sudo install_name_tool -add_rpath @executable_path/../Frameworks "$MAIN_EXE"
+          install_name_tool -add_rpath @executable_path/../Frameworks build/openxcom.app/Contents/MacOS/openxcom
           
-          # Ensure the entire app bundle has proper permissions
-          sudo chmod -R 755 "$APP_PATH"
-          sudo chown -R $(whoami) "$APP_PATH"
-          EOL
-          
-          # Make the script executable
-          chmod +x copy_dependencies.sh
-          
-          # Run the script
-          ${{ env.ARCH_CMD }} ./copy_dependencies.sh
-          
-          # Check what libraries were bundled
+          # List the bundled libraries
           echo "Libraries in Frameworks directory:"
           ls -la build/openxcom.app/Contents/Frameworks/
           
-          # Remove code signature attributes and sign the app
-          sudo xattr -cr build/openxcom.app
+          # Fix permissions
+          chmod -R 755 build/openxcom.app
+          
+          # First clear all extended attributes
+          xattr -cr build/openxcom.app
+          
+          # Sign the app with proper entitlements
           codesign --force --deep --sign - build/openxcom.app
           
-          # Verify all dependencies are properly linked
+          # Explicitly remove quarantine attribute
+          xattr -d com.apple.quarantine build/openxcom.app 2>/dev/null || true
+          
+          # Verify no quarantine attribute remains
+          echo "Checking for quarantine attribute:"
+          xattr -l build/openxcom.app || echo "No extended attributes found (good)"
+          
+          # Verify final dependencies
           echo "Final executable dependencies:"
           otool -L build/openxcom.app/Contents/MacOS/openxcom
 
-      # Create a single zip file directly from the app bundle
+      # Create a README with instructions for running the app
+      - name: Create README with instructions
+        run: |
+          cat > build/README.txt << 'EOL'
+          OpenXcom Extended for macOS
+          ===========================
+          
+          Installation Instructions
+          ------------------------
+          1. Extract the openxcom.app from this archive
+          2. Move it to your Applications folder or any location of your choice
+          
+          First Run Instructions
+          --------------------
+          When running the app for the first time, you may see a security warning about 
+          the app being from an "unidentified developer".
+          
+          To run the app, you can either:
+          
+          Option 1: Right-click (or Control-click) the app icon and select "Open" from the menu.
+                   Click "Open" in the dialog that appears.
+          
+          Option 2: Open Terminal and run this command:
+                   xattr -d com.apple.quarantine /path/to/openxcom.app
+                   
+                   (Replace /path/to/openxcom.app with the actual path to the app)
+          
+          This only needs to be done once.
+          
+          Enjoy OpenXcom Extended!
+          EOL
+
+      # Create a single zip file directly from the app bundle and README
       - name: Package app bundle
         run: |
           cd build
-          mkdir -p "${{ env.FILENAME }}"
-          mv openxcom.app "${{ env.FILENAME }}/"
-          zip -r "${{ env.FILENAME }}.zip" "${{ env.FILENAME }}"
+          zip -r "${{ env.FILENAME }}.zip" openxcom.app README.txt
 
       # Upload the single zip file
       - name: Upload artifact
