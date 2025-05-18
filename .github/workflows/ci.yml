@@ -78,37 +78,40 @@ jobs:
             -p @executable_path/../Frameworks/
           install_name_tool -add_rpath @executable_path/../Frameworks openxcom.app/Contents/MacOS/openxcom
 
-      - name: Manually copy libSDL-1.2.0.dylib into bundle
+      - name: Bundle libSDL-1.2.0.dylib
         run: |
           cd build
-          SDL12_LIB=$(find /opt/homebrew/lib -name "libSDL-1.2.0.dylib" | head -n 1)
+          LIB=$(find /opt/homebrew/lib -name "libSDL-1.2.0.dylib" | head -n 1)
+          cp "$LIB" openxcom.app/Contents/Frameworks/
+          install_name_tool -change "$LIB" "@executable_path/../Frameworks/libSDL-1.2.0.dylib" openxcom.app/Contents/MacOS/openxcom
 
-          if [ -f "$SDL12_LIB" ]; then
-            echo "Found SDL 1.2 shim: $SDL12_LIB"
-            cp "$SDL12_LIB" openxcom.app/Contents/Frameworks/
-            install_name_tool -change "$SDL12_LIB" \
-              "@executable_path/../Frameworks/libSDL-1.2.0.dylib" \
-              openxcom.app/Contents/MacOS/openxcom
-          else
-            echo "Error: Could not find libSDL-1.2.0.dylib"
-            exit 1
-          fi
-
-      - name: Manually copy libz.1.dylib into bundle
+      - name: Bundle libz.1.dylib
         run: |
           cd build
-          ZLIB=$(find /opt/homebrew/opt/zlib/lib -name "libz.1.dylib" | head -n 1)
+          LIB=$(find /opt/homebrew/opt/zlib/lib -name "libz.1.dylib" | head -n 1)
+          cp "$LIB" openxcom.app/Contents/Frameworks/
+          install_name_tool -change "$LIB" "@executable_path/../Frameworks/libz.1.dylib" openxcom.app/Contents/MacOS/openxcom
 
-          if [ -f "$ZLIB" ]; then
-            echo "Found zlib: $ZLIB"
-            cp "$ZLIB" openxcom.app/Contents/Frameworks/
-            install_name_tool -change "$ZLIB" \
-              "@executable_path/../Frameworks/libz.1.dylib" \
-              openxcom.app/Contents/MacOS/openxcom
-          else
-            echo "Error: Could not find libz.1.dylib"
-            exit 1
-          fi
+      - name: Bundle libSDL_image-1.2.0.dylib
+        run: |
+          cd build
+          LIB=$(find /opt/homebrew/lib -name "libSDL_image-1.2.0.dylib" | head -n 1)
+          cp "$LIB" openxcom.app/Contents/Frameworks/
+          install_name_tool -change "$LIB" "@executable_path/../Frameworks/libSDL_image-1.2.0.dylib" openxcom.app/Contents/MacOS/openxcom
+
+      - name: Bundle libSDL_mixer-1.2.0.dylib
+        run: |
+          cd build
+          LIB=$(find /opt/homebrew/lib -name "libSDL_mixer-1.2.0.dylib" | head -n 1)
+          cp "$LIB" openxcom.app/Contents/Frameworks/
+          install_name_tool -change "$LIB" "@executable_path/../Frameworks/libSDL_mixer-1.2.0.dylib" openxcom.app/Contents/MacOS/openxcom
+
+      - name: Bundle libSDL_gfx.dylib
+        run: |
+          cd build
+          LIB=$(find /opt/homebrew/lib -name "libSDL_gfx*.dylib" | head -n 1)
+          cp "$LIB" openxcom.app/Contents/Frameworks/
+          install_name_tool -change "$LIB" "@executable_path/../Frameworks/$(basename $LIB)" openxcom.app/Contents/MacOS/openxcom
 
       - name: Inspect linked libraries
         run: |
