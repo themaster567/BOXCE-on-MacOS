@@ -81,35 +81,59 @@ jobs:
         run: |
           ${{ env.ARCH_CMD }} cmake -B build -DCMAKE_BUILD_TYPE=Release -DPKG_CONFIG_EXECUTABLE=${{ env.HOMEBREW_PREFIX }}/bin/pkg-config -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }}
 
-      - name: Link Homebrew libs in PostprocessBundle.cmake
-        run: |
-          FIND='fixup_bundle("${BUNDLE_PATH}" "${BUNDLE_LIBS}" "")'
-          REPLACE='fixup_bundle("${BUNDLE_PATH}" "${BUNDLE_LIBS}" "'${{ env.HOMEBREW_PREFIX }}'/lib")'
-          sed -i '' "s,$FIND,$REPLACE," cmake/modules/PostprocessBundle.cmake
-
       - name: Build the project
         run: |
           ${{ env.ARCH_CMD }} cmake --build build --parallel $(( $(sysctl -n hw.ncpu) - 1 ))
 
-      - name: Prepare app bundle with additional libraries
+      - name: Create macOS app bundle with all dependencies
         run: |
+          # Create directory for dependencies
+          mkdir -p build/Dependencies
+          
+          # Use dylibbundler to copy and fix all dependencies
+          brew install dylibbundler
+          
+          # Copy executable to a working location for dylibbundler
+          cp build/openxcom.app/Contents/MacOS/openxcom build/openxcom-exec
+          
+          # Run dylibbundler to collect all dependencies
+          dylibbundler -x build/openxcom-exec -b -d build/Dependencies -p @executable_path/../Frameworks/
+          
           # Create Frameworks directory
           mkdir -p build/openxcom.app/Contents/Frameworks/
           
-          # Copy zlib specifically (which was missing previously)
+          # Copy all collected dependencies to the Frameworks directory
+          cp build/Dependencies/* build/openxcom.app/Contents/Frameworks/
+          
+          # Copy zlib specifically (which was identified as missing)
           cp ${{ env.HOMEBREW_PREFIX }}/opt/zlib/lib/libz.1.dylib build/openxcom.app/Contents/Frameworks/ || true
           cp /usr/lib/libz.1.dylib build/openxcom.app/Contents/Frameworks/ || true
           
-          # Copy SDL2 to bundle (original action from your workflow)
-          libSDL2=`${{ env.ARCH_CMD }} brew info SDL2 | grep Cellar | awk '{print $1}'`
-          cp $libSDL2/lib/libSDL2-2.0.0.dylib build/openxcom.app/Contents/Frameworks/ || true
+          # Fix the main executable to use @rpath for zlib
+          install_name_tool -change "/usr/lib/libz.1.dylib" "@rpath/libz.1.dylib" build/openxcom.app/Contents/MacOS/openxcom || true
+          
+          # Add @rpath to the executable
+          install_name_tool -add_rpath @executable_path/../Frameworks build/openxcom.app/Contents/MacOS/openxcom || true
+          
+          # Copy SDL libraries explicitly - these are critical
+          cp ${{ env.HOMEBREW_PREFIX }}/lib/libSDL-1.2.0.dylib build/openxcom.app/Contents/Frameworks/ || true
+          cp ${{ env.HOMEBREW_PREFIX }}/lib/libSDL2-2.0.0.dylib build/openxcom.app/Contents/Frameworks/ || true
+          cp ${{ env.HOMEBREW_PREFIX }}/sdl12-compat/lib/libSDL_image-1.2.0.dylib build/openxcom.app/Contents/Frameworks/ || true
+          cp ${{ env.HOMEBREW_PREFIX }}/sdl12-compat/lib/libSDL_mixer-1.2.0.dylib build/openxcom.app/Contents/Frameworks/ || true
+          cp ${{ env.HOMEBREW_PREFIX }}/lib/libSDL_gfx.15.dylib build/openxcom.app/Contents/Frameworks/ || true
+          cp ${{ env.HOMEBREW_PREFIX }}/lib/libyaml-cpp.0.7.dylib build/openxcom.app/Contents/Frameworks/ || true
+          
+          # Fix the library IDs
+          for lib in build/openxcom.app/Contents/Frameworks/*.dylib; do
+            install_name_tool -id "@rpath/$(basename $lib)" "$lib" || true
+          done
+          
+          # Print what libraries were bundled
+          echo "Bundled libraries:"
+          ls -la build/openxcom.app/Contents/Frameworks/
 
       - name: Fix, sign, and package the app
         run: |
-          # Add @rpath to the executable
-          install_name_tool -add_rpath @executable_path/../Frameworks build/openxcom.app/Contents/MacOS/openxcom || true
-          install_name_tool -add_rpath /usr/lib build/openxcom.app/Contents/MacOS/openxcom || true
-          
           # Fix extended attributes and sign
           sudo xattr -cr build/openxcom.app
           codesign --force --deep --sign - build/openxcom.app
