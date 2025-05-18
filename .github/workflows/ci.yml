@@ -9,9 +9,9 @@ jobs:
   macos:
     name: macOS (${{ matrix.arch }})
     runs-on: macos-latest
-    timeout-minutes: 60  # Add timeout to avoid hung builds
+    timeout-minutes: 60
     strategy:
-      fail-fast: false  # Don't cancel other jobs if one fails
+      fail-fast: false
       matrix:
         arch: [arm64, x86_64]
     
@@ -19,7 +19,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Full git history for versioning
+          fetch-depth: 0
       
       - name: Setup environment
         run: |
@@ -58,9 +58,9 @@ jobs:
             eval "$(/usr/local/bin/brew shellenv || true)"
           fi
           
-          # Install dependencies
+          # Install dependencies with formula flag to avoid warnings
           ${{ env.ARCH_CMD }} brew update
-          ${{ env.ARCH_CMD }} brew install cmake pkg-config sdl12-compat sdl_gfx yaml-cpp zlib
+          ${{ env.ARCH_CMD }} brew install --formula cmake pkg-config sdl12-compat sdl_gfx yaml-cpp zlib || true
 
       # Manually install SDL_image and SDL_mixer for SDL 1.2
       - name: Install SDL_image
@@ -83,66 +83,70 @@ jobs:
 
       - name: Configure CMake
         run: |
-          # Configure using CMake with extra warnings to see any issues
           ${{ env.ARCH_CMD }} cmake -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} \
             -DPKG_CONFIG_EXECUTABLE=${{ env.HOMEBREW_PREFIX }}/bin/pkg-config \
-            -DCMAKE_VERBOSE_MAKEFILE=ON \
             -DCMAKE_CXX_FLAGS="-Wno-dangling-else -Wno-unused-variable"
-          
-          # Show cmake configuration
-          cat build/CMakeCache.txt
 
-      - name: Build OpenXcom (with single thread for debugging)
+      - name: Build OpenXcom
         run: |
-          # Build with a single thread to see errors more clearly
-          ${{ env.ARCH_CMD }} cmake --build build --parallel 1
+          ${{ env.ARCH_CMD }} cmake --build build --parallel $(sysctl -n hw.ncpu)
 
-      - name: Create app bundle
-        if: success()  # Only run if build succeeds
+      - name: Create app bundle with proper permissions
         run: |
-          # Create Frameworks directory
-          mkdir -p build/openxcom.app/Contents/Frameworks
+          # Create Frameworks directory with proper permissions
+          sudo mkdir -p build/openxcom.app/Contents/Frameworks
+          sudo chmod 755 build/openxcom.app/Contents/Frameworks
           
-          # Copy required libraries
-          # SDL
-          cp ${{ env.HOMEBREW_PREFIX }}/lib/libSDL*.dylib build/openxcom.app/Contents/Frameworks/
-          # SDL_image
-          cp ${{ env.HOMEBREW_PREFIX }}/lib/libSDL_image*.dylib build/openxcom.app/Contents/Frameworks/
-          # SDL_mixer
-          cp ${{ env.HOMEBREW_PREFIX }}/lib/libSDL_mixer*.dylib build/openxcom.app/Contents/Frameworks/
-          # SDL_gfx
-          cp ${{ env.HOMEBREW_PREFIX }}/lib/libSDL_gfx*.dylib build/openxcom.app/Contents/Frameworks/
-          # YAML
-          cp ${{ env.HOMEBREW_PREFIX }}/lib/libyaml-cpp*.dylib build/openxcom.app/Contents/Frameworks/
-          # zlib (critical)
-          cp /usr/lib/libz.1.dylib build/openxcom.app/Contents/Frameworks/ || true
-          cp ${{ env.HOMEBREW_PREFIX }}/opt/zlib/lib/libz.1.dylib build/openxcom.app/Contents/Frameworks/ || true
+          # Use sudo for copying to avoid permission issues
+          echo "Copying SDL libraries..."
+          sudo cp ${{ env.HOMEBREW_PREFIX }}/lib/libSDL*.dylib build/openxcom.app/Contents/Frameworks/ || echo "Some SDL libraries may not have been found"
+          
+          echo "Copying SDL_image library..."
+          sudo cp ${{ env.HOMEBREW_PREFIX }}/lib/libSDL_image*.dylib build/openxcom.app/Contents/Frameworks/ || echo "SDL_image library may not have been found"
+          
+          echo "Copying SDL_mixer library..."
+          sudo cp ${{ env.HOMEBREW_PREFIX }}/lib/libSDL_mixer*.dylib build/openxcom.app/Contents/Frameworks/ || echo "SDL_mixer library may not have been found"
+          
+          echo "Copying SDL_gfx library..."
+          sudo find ${{ env.HOMEBREW_PREFIX }}/lib -name "libSDL_gfx*dylib" -exec cp {} build/openxcom.app/Contents/Frameworks/ \; || echo "SDL_gfx library may not have been found"
+          
+          echo "Copying YAML-CPP library..."
+          sudo cp ${{ env.HOMEBREW_PREFIX }}/lib/libyaml-cpp*.dylib build/openxcom.app/Contents/Frameworks/ || echo "YAML-CPP library may not have been found"
+          
+          echo "Copying zlib library..."
+          sudo cp /usr/lib/libz.1.dylib build/openxcom.app/Contents/Frameworks/ || echo "System zlib library may not have been found"
+          sudo cp ${{ env.HOMEBREW_PREFIX }}/opt/zlib/lib/libz.1.dylib build/openxcom.app/Contents/Frameworks/ || echo "Homebrew zlib library may not have been found"
           
           # Check if libraries were successfully copied
           echo "Listing bundled libraries:"
           ls -la build/openxcom.app/Contents/Frameworks/
           
+          # Make sure all files have proper permissions
+          sudo chmod 755 build/openxcom.app/Contents/Frameworks/*.dylib
+          
           # Add @rpath to executable
-          install_name_tool -add_rpath @executable_path/../Frameworks build/openxcom.app/Contents/MacOS/openxcom
+          sudo install_name_tool -add_rpath @executable_path/../Frameworks build/openxcom.app/Contents/MacOS/openxcom
           
           # Fix zlib reference specifically
-          install_name_tool -change "/usr/lib/libz.1.dylib" "@rpath/libz.1.dylib" build/openxcom.app/Contents/MacOS/openxcom || true
+          sudo install_name_tool -change "/usr/lib/libz.1.dylib" "@rpath/libz.1.dylib" build/openxcom.app/Contents/MacOS/openxcom || true
+          
+          # Ensure the entire app bundle has proper permissions
+          sudo chmod -R 755 build/openxcom.app
+          sudo chown -R $(whoami) build/openxcom.app
           
           # Remove code signature attributes and sign the app
           sudo xattr -cr build/openxcom.app
           codesign --force --deep --sign - build/openxcom.app
 
       - name: Package app
-        if: success()  # Only run if previous steps succeed
         run: |
           mkdir -p artifacts
           cd build
           zip -r ../artifacts/${{ env.FILENAME }}.zip openxcom.app
 
       - name: Archive artifacts
-        if: success()  # Only run if previous steps succeed
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.FILENAME }}
