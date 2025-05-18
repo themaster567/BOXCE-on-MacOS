@@ -81,139 +81,37 @@ jobs:
         run: |
           ${{ env.ARCH_CMD }} cmake -B build -DCMAKE_BUILD_TYPE=Release -DPKG_CONFIG_EXECUTABLE=${{ env.HOMEBREW_PREFIX }}/bin/pkg-config -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }}
 
+      - name: Link Homebrew libs in PostprocessBundle.cmake
+        run: |
+          FIND='fixup_bundle("${BUNDLE_PATH}" "${BUNDLE_LIBS}" "")'
+          REPLACE='fixup_bundle("${BUNDLE_PATH}" "${BUNDLE_LIBS}" "'${{ env.HOMEBREW_PREFIX }}'/lib")'
+          sed -i '' "s,$FIND,$REPLACE," cmake/modules/PostprocessBundle.cmake
+
       - name: Build the project
         run: |
           ${{ env.ARCH_CMD }} cmake --build build --parallel $(( $(sysctl -n hw.ncpu) - 1 ))
 
-      - name: Find library dependencies
-        run: |
-          # Create a list of all libraries the executable depends on
-          LIBS_NEEDED=$(otool -L build/openxcom.app/Contents/MacOS/openxcom | grep -v '@executable_path' | grep -v '/System/' | grep -v '/usr/lib/' | awk '{print $1}')
-          echo "Libraries needed:"
-          echo "$LIBS_NEEDED"
-          echo "LIBS_NEEDED<<EOF" >> $GITHUB_ENV
-          echo "$LIBS_NEEDED" >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
-
-      - name: Prepare app bundle
+      - name: Prepare app bundle with additional libraries
         run: |
           # Create Frameworks directory
           mkdir -p build/openxcom.app/Contents/Frameworks/
           
-          # Copy all required libraries
-          # Add system compression library (zlib) - this was missing previously
+          # Copy zlib specifically (which was missing previously)
           cp ${{ env.HOMEBREW_PREFIX }}/opt/zlib/lib/libz.1.dylib build/openxcom.app/Contents/Frameworks/ || true
-          
-          # SDL (SDL12-compat is SDL1.2 compatibility layer built on SDL2)
-          cp ${{ env.HOMEBREW_PREFIX }}/lib/libSDL-*dylib build/openxcom.app/Contents/Frameworks/
-          cp ${{ env.HOMEBREW_PREFIX }}/lib/libSDL2*dylib build/openxcom.app/Contents/Frameworks/
-          
-          # SDL_image
-          cp ${{ env.HOMEBREW_PREFIX }}/sdl12-compat/lib/libSDL_image*dylib build/openxcom.app/Contents/Frameworks/
-          
-          # SDL_mixer
-          cp ${{ env.HOMEBREW_PREFIX }}/sdl12-compat/lib/libSDL_mixer*dylib build/openxcom.app/Contents/Frameworks/
-          
-          # SDL_gfx
-          cp ${{ env.HOMEBREW_PREFIX }}/lib/libSDL_gfx*dylib build/openxcom.app/Contents/Frameworks/
-          
-          # YAML-CPP
-          cp ${{ env.HOMEBREW_PREFIX }}/lib/libyaml-cpp*dylib build/openxcom.app/Contents/Frameworks/
-          
-          # Copy all libraries from /usr/lib that might be needed and aren't part of the base system
           cp /usr/lib/libz.1.dylib build/openxcom.app/Contents/Frameworks/ || true
-          cp /usr/lib/libpng*dylib build/openxcom.app/Contents/Frameworks/ || true
-          cp /usr/lib/libjpeg*dylib build/openxcom.app/Contents/Frameworks/ || true
           
-          # Copy image format libraries that SDL_image might need
-          cp ${{ env.HOMEBREW_PREFIX }}/lib/libjpeg*dylib build/openxcom.app/Contents/Frameworks/ || true
-          cp ${{ env.HOMEBREW_PREFIX }}/lib/libpng*dylib build/openxcom.app/Contents/Frameworks/ || true
-          cp ${{ env.HOMEBREW_PREFIX }}/lib/libtiff*dylib build/openxcom.app/Contents/Frameworks/ || true
-          cp ${{ env.HOMEBREW_PREFIX }}/lib/libwebp*dylib build/openxcom.app/Contents/Frameworks/ || true
-          
-          # Copy audio format libraries that SDL_mixer might need
-          cp ${{ env.HOMEBREW_PREFIX }}/lib/libvorbis*dylib build/openxcom.app/Contents/Frameworks/ || true
-          cp ${{ env.HOMEBREW_PREFIX }}/lib/libogg*dylib build/openxcom.app/Contents/Frameworks/ || true
-          cp ${{ env.HOMEBREW_PREFIX }}/lib/libFLAC*dylib build/openxcom.app/Contents/Frameworks/ || true
-          cp ${{ env.HOMEBREW_PREFIX }}/lib/libmodplug*dylib build/openxcom.app/Contents/Frameworks/ || true
-          cp ${{ env.HOMEBREW_PREFIX }}/lib/libmpg123*dylib build/openxcom.app/Contents/Frameworks/ || true
-          
-          # Copy any additional libraries that might be needed
-          for lib in ${{ env.LIBS_NEEDED }}; do
-            base_name=$(basename "$lib")
-            find ${{ env.HOMEBREW_PREFIX }} -name "$base_name" -exec cp {} build/openxcom.app/Contents/Frameworks/ \; || true
-          done
-          
-          # List all copied libraries for debugging
-          echo "Files in Frameworks directory:"
-          ls -la build/openxcom.app/Contents/Frameworks/
+          # Copy SDL2 to bundle (original action from your workflow)
+          libSDL2=`${{ env.ARCH_CMD }} brew info SDL2 | grep Cellar | awk '{print $1}'`
+          cp $libSDL2/lib/libSDL2-2.0.0.dylib build/openxcom.app/Contents/Frameworks/ || true
 
-      - name: Remove code signatures from libraries
+      - name: Fix, sign, and package the app
         run: |
-          # First remove any existing code signatures from libraries
-          sudo xattr -cr build/openxcom.app/Contents/Frameworks/*.dylib
-          # Remove signatures from executable as well
-          sudo xattr -cr build/openxcom.app/Contents/MacOS/openxcom
-
-      - name: Fix library paths with install_name_tool
-        run: |
-          cd build/openxcom.app/Contents/Frameworks/
+          # Add @rpath to the executable
+          install_name_tool -add_rpath @executable_path/../Frameworks build/openxcom.app/Contents/MacOS/openxcom || true
+          install_name_tool -add_rpath /usr/lib build/openxcom.app/Contents/MacOS/openxcom || true
           
-          # Use otool to find dependencies and fix them
-          for lib in *.dylib; do
-            echo "Processing $lib..."
-            
-            # Get the install name of the library
-            INSTALL_NAME=$(otool -D "$lib" | tail -n 1)
-            
-            # Fix the ID of the library to use @rpath
-            install_name_tool -id "@rpath/$(basename $lib)" "$lib" || echo "Failed to change ID for $lib"
-            
-            # Get the dependencies of the library
-            DEPS=$(otool -L "$lib" | tail -n +2 | awk '{print $1}' | grep -v '@rpath' | grep -v '/System/' | grep -v '/usr/lib/')
-            
-            # Fix each dependency
-            for dep in $DEPS; do
-              # If the dependency is from Homebrew or is one of our libraries
-              BASE_NAME=$(basename "$dep")
-              # Change the path to use @rpath
-              install_name_tool -change "$dep" "@rpath/$BASE_NAME" "$lib" || echo "Failed to change $dep in $lib"
-            done
-          done
-          
-          # Fix the main executable as well
-          cd ../MacOS
-          MAIN_EXE="openxcom"
-          
-          # Get all dependencies that need to be fixed
-          DEPS=$(otool -L "$MAIN_EXE" | tail -n +2 | awk '{print $1}' | grep -v '@rpath' | grep -v '/System/' | grep -v '/usr/lib/')
-          
-          # Fix each dependency
-          for dep in $DEPS; do
-            BASE_NAME=$(basename "$dep")
-            # Change the path to use @rpath
-            install_name_tool -change "$dep" "@rpath/$BASE_NAME" "$MAIN_EXE" || echo "Failed to change $dep in $MAIN_EXE"
-          done
-          
-          # Fix libz.1.dylib specifically, which is a system library but needs to be bundled
-          if otool -L "$MAIN_EXE" | grep -q '/usr/lib/libz.1.dylib'; then
-            install_name_tool -change "/usr/lib/libz.1.dylib" "@rpath/libz.1.dylib" "$MAIN_EXE" || echo "Failed to change libz.1.dylib in $MAIN_EXE"
-          fi
-
-      - name: Add rpaths and finalize app
-        run: |
-          # Add @rpath to the binary
-          install_name_tool -add_rpath @executable_path/../Frameworks build/openxcom.app/Contents/MacOS/openxcom || echo "Failed to add rpath"
-          
-          # Also add system paths as fallbacks
-          install_name_tool -add_rpath /usr/lib build/openxcom.app/Contents/MacOS/openxcom || echo "Failed to add /usr/lib rpath"
-          install_name_tool -add_rpath ${{ env.HOMEBREW_PREFIX }}/lib build/openxcom.app/Contents/MacOS/openxcom || echo "Failed to add Homebrew lib rpath"
-          
-          # Check all dependencies
-          echo "Final executable dependencies:"
-          otool -L build/openxcom.app/Contents/MacOS/openxcom
-          
-          # Sign the app
+          # Fix extended attributes and sign
+          sudo xattr -cr build/openxcom.app
           codesign --force --deep --sign - build/openxcom.app
           
           # Package the app
