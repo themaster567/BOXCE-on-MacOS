@@ -78,7 +78,7 @@ jobs:
             -p @executable_path/../Frameworks/
           install_name_tool -add_rpath @executable_path/../Frameworks openxcom.app/Contents/MacOS/openxcom
 
-      - name: Manually copy libSDL-1.2.0.dylib (sdl12-compat) into bundle
+      - name: Manually copy libSDL-1.2.0.dylib into bundle
         run: |
           cd build
           SDL12_LIB=$(find /opt/homebrew/lib -name "libSDL-1.2.0.dylib" | head -n 1)
@@ -91,6 +91,22 @@ jobs:
               openxcom.app/Contents/MacOS/openxcom
           else
             echo "Error: Could not find libSDL-1.2.0.dylib"
+            exit 1
+          fi
+
+      - name: Manually copy libz.1.dylib into bundle
+        run: |
+          cd build
+          ZLIB=$(find /opt/homebrew/opt/zlib/lib -name "libz.1.dylib" | head -n 1)
+
+          if [ -f "$ZLIB" ]; then
+            echo "Found zlib: $ZLIB"
+            cp "$ZLIB" openxcom.app/Contents/Frameworks/
+            install_name_tool -change "$ZLIB" \
+              "@executable_path/../Frameworks/libz.1.dylib" \
+              openxcom.app/Contents/MacOS/openxcom
+          else
+            echo "Error: Could not find libz.1.dylib"
             exit 1
           fi
 
