@@ -50,7 +50,7 @@ jobs:
 
       - name: Install dependencies with Homebrew
         run: |
-          ${{ env.ARCH_CMD }} brew install cmake pkg-config sdl12-compat sdl_gfx yaml-cpp ccache
+          ${{ env.ARCH_CMD }} brew install cmake pkg-config sdl12-compat sdl_gfx yaml-cpp ccache zlib
 
       # Manually download and build SDL_image using autotools
       - name: Download and install SDL_image
@@ -85,12 +85,25 @@ jobs:
         run: |
           ${{ env.ARCH_CMD }} cmake --build build --parallel $(( $(sysctl -n hw.ncpu) - 1 ))
 
+      - name: Find library dependencies
+        run: |
+          # Create a list of all libraries the executable depends on
+          LIBS_NEEDED=$(otool -L build/openxcom.app/Contents/MacOS/openxcom | grep -v '@executable_path' | grep -v '/System/' | grep -v '/usr/lib/' | awk '{print $1}')
+          echo "Libraries needed:"
+          echo "$LIBS_NEEDED"
+          echo "LIBS_NEEDED<<EOF" >> $GITHUB_ENV
+          echo "$LIBS_NEEDED" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
       - name: Prepare app bundle
         run: |
-          # Create Frameworks directory if it doesn't exist
+          # Create Frameworks directory
           mkdir -p build/openxcom.app/Contents/Frameworks/
           
           # Copy all required libraries
+          # Add system compression library (zlib) - this was missing previously
+          cp ${{ env.HOMEBREW_PREFIX }}/opt/zlib/lib/libz.1.dylib build/openxcom.app/Contents/Frameworks/ || true
+          
           # SDL (SDL12-compat is SDL1.2 compatibility layer built on SDL2)
           cp ${{ env.HOMEBREW_PREFIX }}/lib/libSDL-*dylib build/openxcom.app/Contents/Frameworks/
           cp ${{ env.HOMEBREW_PREFIX }}/lib/libSDL2*dylib build/openxcom.app/Contents/Frameworks/
@@ -107,6 +120,11 @@ jobs:
           # YAML-CPP
           cp ${{ env.HOMEBREW_PREFIX }}/lib/libyaml-cpp*dylib build/openxcom.app/Contents/Frameworks/
           
+          # Copy all libraries from /usr/lib that might be needed and aren't part of the base system
+          cp /usr/lib/libz.1.dylib build/openxcom.app/Contents/Frameworks/ || true
+          cp /usr/lib/libpng*dylib build/openxcom.app/Contents/Frameworks/ || true
+          cp /usr/lib/libjpeg*dylib build/openxcom.app/Contents/Frameworks/ || true
+          
           # Copy image format libraries that SDL_image might need
           cp ${{ env.HOMEBREW_PREFIX }}/lib/libjpeg*dylib build/openxcom.app/Contents/Frameworks/ || true
           cp ${{ env.HOMEBREW_PREFIX }}/lib/libpng*dylib build/openxcom.app/Contents/Frameworks/ || true
@@ -119,6 +137,16 @@ jobs:
           cp ${{ env.HOMEBREW_PREFIX }}/lib/libFLAC*dylib build/openxcom.app/Contents/Frameworks/ || true
           cp ${{ env.HOMEBREW_PREFIX }}/lib/libmodplug*dylib build/openxcom.app/Contents/Frameworks/ || true
           cp ${{ env.HOMEBREW_PREFIX }}/lib/libmpg123*dylib build/openxcom.app/Contents/Frameworks/ || true
+          
+          # Copy any additional libraries that might be needed
+          for lib in ${{ env.LIBS_NEEDED }}; do
+            base_name=$(basename "$lib")
+            find ${{ env.HOMEBREW_PREFIX }} -name "$base_name" -exec cp {} build/openxcom.app/Contents/Frameworks/ \; || true
+          done
+          
+          # List all copied libraries for debugging
+          echo "Files in Frameworks directory:"
+          ls -la build/openxcom.app/Contents/Frameworks/
 
       - name: Fix library paths with install_name_tool
         run: |
@@ -135,40 +163,35 @@ jobs:
             install_name_tool -id "@rpath/$(basename $lib)" "$lib" || true
             
             # Get the dependencies of the library
-            DEPS=$(otool -L "$lib" | tail -n +2 | awk '{print $1}' | grep -v '@rpath')
+            DEPS=$(otool -L "$lib" | tail -n +2 | awk '{print $1}' | grep -v '@rpath' | grep -v '/System/' | grep -v '/usr/lib/')
             
             # Fix each dependency
             for dep in $DEPS; do
               # If the dependency is from Homebrew or is one of our libraries
-              if [[ "$dep" == *"${{ env.HOMEBREW_PREFIX }}"* ]] || [[ "$dep" == */lib/* ]]; then
-                BASE_NAME=$(basename "$dep")
-                # Skip system libraries
-                if [[ "$BASE_NAME" == libSystem* ]] || [[ "$BASE_NAME" == libc* ]] || [[ "$BASE_NAME" == libobjc* ]]; then
-                  continue
-                fi
-                # Change the path to use @rpath
-                install_name_tool -change "$dep" "@rpath/$BASE_NAME" "$lib" || true
-              fi
+              BASE_NAME=$(basename "$dep")
+              # Change the path to use @rpath
+              install_name_tool -change "$dep" "@rpath/$BASE_NAME" "$lib" || true
             done
           done
           
           # Fix the main executable as well
           cd ../MacOS
           MAIN_EXE="openxcom"
-          DEPS=$(otool -L "$MAIN_EXE" | tail -n +2 | awk '{print $1}' | grep -v '@rpath')
+          DEPS=$(otool -L "$MAIN_EXE" | tail -n +2 | awk '{print $1}' | grep -v '@rpath' | grep -v '/System/' | grep -v '/usr/lib/')
           
           # Fix each dependency
           for dep in $DEPS; do
-            # If the dependency is from Homebrew or is one of our libraries
-            if [[ "$dep" == *"${{ env.HOMEBREW_PREFIX }}"* ]] || [[ "$dep" == */lib/* ]]; then
-              BASE_NAME=$(basename "$dep")
-              # Skip system libraries
-              if [[ "$BASE_NAME" == libSystem* ]] || [[ "$BASE_NAME" == libc* ]] || [[ "$BASE_NAME" == libobjc* ]]; then
-                continue
-              fi
-              # Change the path to use @rpath
-              install_name_tool -change "$dep" "@rpath/$BASE_NAME" "$MAIN_EXE" || true
-            fi
+            BASE_NAME=$(basename "$dep")
+            # Change the path to use @rpath
+            install_name_tool -change "$dep" "@rpath/$BASE_NAME" "$MAIN_EXE" || true
+          done
+          
+          # Also fix system library references to use @rpath
+          SYSTEM_DEPS=$(otool -L "$MAIN_EXE" | grep '/usr/lib/libz.1.dylib' | awk '{print $1}')
+          for dep in $SYSTEM_DEPS; do
+            BASE_NAME=$(basename "$dep")
+            # Change the path to use @rpath
+            install_name_tool -change "$dep" "@rpath/$BASE_NAME" "$MAIN_EXE" || true
           done
 
       - name: Fix, sign, and package the app
@@ -176,13 +199,17 @@ jobs:
           # Add @rpath to the binary
           install_name_tool -add_rpath @executable_path/../Frameworks build/openxcom.app/Contents/MacOS/openxcom || true
           
+          # Also add system paths as fallbacks
+          install_name_tool -add_rpath /usr/lib build/openxcom.app/Contents/MacOS/openxcom || true
+          install_name_tool -add_rpath /usr/local/lib build/openxcom.app/Contents/MacOS/openxcom || true
+          
+          # Check all dependencies
+          echo "Final executable dependencies:"
+          otool -L build/openxcom.app/Contents/MacOS/openxcom
+          
           # Fix extended attributes and sign
           sudo xattr -cr build/openxcom.app
           codesign --force --deep --sign - build/openxcom.app
-          
-          # Verify app bundle
-          echo "Verifying app bundle integrity..."
-          otool -L build/openxcom.app/Contents/MacOS/openxcom
           
           # Package the app
           cd build
