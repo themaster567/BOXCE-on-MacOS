@@ -1,4 +1,4 @@
-name: CI Build for macOS ARM64
+name: Universal macOS Build
 
 on:
   push:
@@ -7,29 +7,34 @@ on:
   workflow_dispatch:
 
 jobs:
-  macos-arm64:
-    name: Build macOS (arm64)
+  build:
+    strategy:
+      matrix:
+        arch: [arm64, x86_64]
     runs-on: macos-14
+    name: Build ${{ matrix.arch }}
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Set up build environment variables
+      - name: Setup environment
         id: setup
         run: |
-          DATEFILE=$(git log -1 --date=format:'%Y_%m_%d_%H%M' --format='%ad')
-          echo "datefile=$DATEFILE" >> $GITHUB_OUTPUT
-          echo "filename=openxcom_${DATEFILE}_macos_arm64" >> $GITHUB_OUTPUT
+          DATE=$(git log -1 --date=format:'%Y_%m_%d_%H%M' --format='%ad')
+          DATE_HUMAN=$(git log -1 --date=format:'%Y-%m-%d %H:%M' --format='%ad')
+          echo "datefile=$DATE" >> $GITHUB_OUTPUT
+          echo "dateversion=$DATE_HUMAN" >> $GITHUB_OUTPUT
+          echo "archdir=build-${{ matrix.arch }}" >> $GITHUB_OUTPUT
+          echo "filename=openxcom_${DATE}_macos" >> $GITHUB_OUTPUT
 
-      - name: Install dependencies via Homebrew
+      - name: Install dependencies
         run: |
           brew update
           brew install cmake pkg-config sdl12-compat sdl_gfx yaml-cpp zlib dylibbundler ccache
 
-      - name: Build SDL_image 1.2.12 manually
+      - name: Build SDL_image 1.2.12
         run: |
           curl -LO https://www.libsdl.org/projects/SDL_image/release/SDL_image-1.2.12.tar.gz
           tar -xzf SDL_image-1.2.12.tar.gz
@@ -38,7 +43,7 @@ jobs:
           make -j$(sysctl -n hw.ncpu)
           sudo make install
 
-      - name: Build SDL_mixer 1.2.12 manually
+      - name: Build SDL_mixer 1.2.12
         run: |
           curl -LO https://www.libsdl.org/projects/SDL_mixer/release/SDL_mixer-1.2.12.tar.gz
           tar -xzf SDL_mixer-1.2.12.tar.gz
@@ -47,7 +52,7 @@ jobs:
           make -j$(sysctl -n hw.ncpu)
           sudo make install
 
-      - name: Set environment variables
+      - name: Set environment
         run: |
           echo "LDFLAGS=-L/opt/homebrew/opt/zlib/lib" >> $GITHUB_ENV
           echo "CPPFLAGS=-I/opt/homebrew/opt/zlib/include" >> $GITHUB_ENV
@@ -55,7 +60,11 @@ jobs:
           echo "CMAKE_C_COMPILER_LAUNCHER=ccache" >> $GITHUB_ENV
           echo "CMAKE_CXX_COMPILER_LAUNCHER=ccache" >> $GITHUB_ENV
 
-      - name: Configure and build with CMake
+      - name: Update version.h
+        run: |
+          sed -i '' 's/OPENXCOM_VERSION_GIT ".*"/OPENXCOM_VERSION_GIT " git ${{ steps.setup.outputs.dateversion }}"/' src/version.h
+
+      - name: Configure and build OXCE
         env:
           LDFLAGS: ${{ env.LDFLAGS }}
           CPPFLAGS: ${{ env.CPPFLAGS }}
@@ -63,59 +72,82 @@ jobs:
           CMAKE_C_COMPILER_LAUNCHER: ccache
           CMAKE_CXX_COMPILER_LAUNCHER: ccache
         run: |
-          mkdir build
-          cd build
+          mkdir ${{ steps.setup.outputs.archdir }}
+          cd ${{ steps.setup.outputs.archdir }}
           cmake .. \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=10.9 \
-            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} \
             -DBUILD_TESTING=OFF \
             -DDOXYGEN_FOUND=FALSE
           make -j$(sysctl -n hw.ncpu)
 
-      - name: Bundle libraries with dylibbundler
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: oxce-macos-${{ matrix.arch }}
+          path: ${{ steps.setup.outputs.archdir }}/openxcom.app/Contents/MacOS/openxcom
+
+  merge:
+    needs: build
+    runs-on: macos-14
+    name: Merge and Package Universal Binary
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup
+        id: setup
         run: |
-          cd build
-          mkdir -p openxcom.app/Contents/Frameworks
+          DATE=$(git log -1 --date=format:'%Y_%m_%d_%H%M' --format='%ad')
+          echo "datefile=$DATE" >> $GITHUB_OUTPUT
+          echo "filename=openxcom_${DATE}_macos_universal" >> $GITHUB_OUTPUT
+
+      - name: Download ARM64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: oxce-macos-arm64
+          path: bin-arm64
+
+      - name: Download x86_64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: oxce-macos-x86_64
+          path: bin-x86_64
+
+      - name: Merge binaries with lipo
+        run: |
+          mkdir -p universal/openxcom.app/Contents/MacOS
+          lipo -create bin-arm64/openxcom bin-x86_64/openxcom \
+            -output universal/openxcom.app/Contents/MacOS/openxcom
+          chmod +x universal/openxcom.app/Contents/MacOS/openxcom
+
+      - name: Copy .app resources
+        run: |
+          cp -R bin-arm64/../* universal/openxcom.app/
+          rm -f universal/openxcom.app/Contents/MacOS/openxcom
+          cp bin-arm64/openxcom universal/openxcom.app/Contents/MacOS/openxcom
+
+      - name: Bundle libraries
+        run: |
+          cd universal
           dylibbundler -od -b -x openxcom.app/Contents/MacOS/openxcom \
             -d openxcom.app/Contents/Frameworks \
             -p @executable_path/../Frameworks/
           install_name_tool -add_rpath @executable_path/../Frameworks openxcom.app/Contents/MacOS/openxcom
 
-      - name: Bundle all manually linked libraries
+      - name: Code sign
         run: |
-          cd build
-
-          for LIBNAME in \
-            libSDL-1.2.0.dylib \
-            libz.1.dylib \
-            libSDL_image-1.2.0.dylib \
-            libSDL_mixer-1.2.0.dylib; do
-
-            SRC=$(find /opt/homebrew/lib /opt/homebrew/opt/zlib/lib -name "$LIBNAME" | head -n 1)
-            cp "$SRC" openxcom.app/Contents/Frameworks/
-            install_name_tool -change "$SRC" "@executable_path/../Frameworks/$LIBNAME" openxcom.app/Contents/MacOS/openxcom
-          done
-
-          SDLGFX=$(find /opt/homebrew/lib -name "libSDL_gfx*.dylib" | head -n 1)
-          cp "$SDLGFX" openxcom.app/Contents/Frameworks/
-          install_name_tool -change "$SDLGFX" "@executable_path/../Frameworks/$(basename $SDLGFX)" openxcom.app/Contents/MacOS/openxcom
-
-      - name: Code sign and remove quarantine
-        run: |
-          cd build
+          cd universal
           xattr -cr openxcom.app
           codesign --force --deep --sign - openxcom.app
-          xattr -d com.apple.quarantine openxcom.app || true
 
       - name: Install create-dmg
-        run: |
-          brew install create-dmg
+        run: brew install create-dmg
 
       - name: Create DMG
         run: |
-          cd build
-          mkdir dist
+          cd universal
           create-dmg \
             --volname "OpenXcom Extended" \
             --window-pos 200 120 \
@@ -124,11 +156,30 @@ jobs:
             --icon "openxcom.app" 175 120 \
             --hide-extension "openxcom.app" \
             --app-drop-link 425 120 \
-            "openxcom_${{ steps.setup.outputs.datefile }}.dmg" \
+            "../${{ steps.setup.outputs.filename }}.dmg" \
             "."
 
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+      - name: Generate changelog
+        id: changelog
+        run: |
+          git fetch --tags
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -n "$LAST_TAG" ]; then
+            LOG=$(git log "$LAST_TAG"..HEAD --pretty=format:"- %s")
+          else
+            LOG=$(git log --pretty=format:"- %s" -n 20)
+          fi
+          echo "changelog<<EOF" >> $GITHUB_OUTPUT
+          echo "$LOG" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
         with:
-          name: ${{ steps.setup.outputs.filename }}.dmg
-          path: build/openxcom_${{ steps.setup.outputs.datefile }}.dmg
+          name: OpenXcom Extended ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          body: ${{ steps.changelog.outputs.changelog }}
+          files: ${{ steps.setup.outputs.filename }}.dmg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
