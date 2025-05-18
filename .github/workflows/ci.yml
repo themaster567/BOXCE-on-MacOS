@@ -50,16 +50,6 @@ jobs:
             echo "Tag $VERSION_TAG already exists. Skipping."
           fi
 
-      - name: Delete older tags (keep latest only)
-        run: |
-          CURRENT_TAG=${{ steps.version.outputs.tagname }}
-          git fetch --tags
-          TAGS_TO_DELETE=$(git tag | grep -v "^${CURRENT_TAG}$")
-          for tag in $TAGS_TO_DELETE; do
-            echo "Deleting tag: $tag"
-            git push --delete origin "$tag"
-          done
-
       - name: Install base dependencies
         run: |
           brew update
