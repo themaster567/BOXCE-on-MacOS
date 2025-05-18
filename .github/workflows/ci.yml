@@ -27,9 +27,14 @@ jobs:
       - name: Parse version from version.h
         id: version
         run: |
-          VERSION_LINE=$(grep OPENXCOM_VERSION_GIT src/version.h || grep OPENXCOM_VERSION_LONG src/version.h)
+          VERSION_LINE=$(grep -E '^#define +OPENXCOM_VERSION_GIT +".*"' src/version.h || \
+                         grep -E '^#define +OPENXCOM_VERSION_LONG +".*"' src/version.h)
           RAW=$(echo "$VERSION_LINE" | sed -E 's/^.*" *\(?v?([0-9._-]+)\)?".*$/\1/')
           VERSION=$(echo "$RAW" | tr -d '[:space:]')
+          if [[ -z "$VERSION" ]]; then
+            echo "Version not found or invalid format"
+            exit 1
+          fi
           echo "tagname=v$VERSION" >> $GITHUB_OUTPUT
           echo "versionstr=$VERSION" >> $GITHUB_OUTPUT
 
@@ -121,13 +126,6 @@ jobs:
           SDLGFX=$(find /opt/homebrew/lib -name "libSDL_gfx*.dylib" | head -n 1)
           cp "$SDLGFX" openxcom.app/Contents/Frameworks/
           install_name_tool -change "$SDLGFX" "@executable_path/../Frameworks/$(basename $SDLGFX)" openxcom.app/Contents/MacOS/openxcom
-
-      - name: Code sign and clear quarantine
-        run: |
-          cd build
-          xattr -cr openxcom.app
-          codesign --force --deep --sign - openxcom.app
-          xattr -d com.apple.quarantine openxcom.app || true
 
       - name: Install create-dmg
         run: brew install create-dmg
