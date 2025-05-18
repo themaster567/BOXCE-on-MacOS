@@ -60,7 +60,7 @@ jobs:
           
           # Install dependencies with formula flag to avoid warnings
           ${{ env.ARCH_CMD }} brew update
-          ${{ env.ARCH_CMD }} brew install --formula cmake pkg-config sdl12-compat sdl_gfx yaml-cpp zlib || true
+          ${{ env.ARCH_CMD }} brew install --formula cmake pkg-config sdl12-compat sdl_gfx yaml-cpp zlib dylibbundler || true
 
       # Manually install SDL_image and SDL_mixer for SDL 1.2
       - name: Install SDL_image
@@ -93,61 +93,133 @@ jobs:
         run: |
           ${{ env.ARCH_CMD }} cmake --build build --parallel $(sysctl -n hw.ncpu)
 
-      - name: Create app bundle with proper permissions
+      - name: Create app bundle with all dependencies
         run: |
+          # Make a temporary copy of the executable for analysis
+          mkdir -p tmp
+          cp build/openxcom.app/Contents/MacOS/openxcom tmp/
+          
+          # Analyze executable dependencies
+          echo "Main executable dependencies:"
+          otool -L tmp/openxcom
+          
           # Create Frameworks directory with proper permissions
           sudo mkdir -p build/openxcom.app/Contents/Frameworks
           sudo chmod 755 build/openxcom.app/Contents/Frameworks
           
-          # Use sudo for copying to avoid permission issues
-          echo "Copying SDL libraries..."
-          sudo cp ${{ env.HOMEBREW_PREFIX }}/lib/libSDL*.dylib build/openxcom.app/Contents/Frameworks/ || echo "Some SDL libraries may not have been found"
+          # Now use a shell script to find and copy all dependencies recursively
+          cat > copy_dependencies.sh << 'EOL'
+          #!/bin/bash
           
-          echo "Copying SDL_image library..."
-          sudo cp ${{ env.HOMEBREW_PREFIX }}/lib/libSDL_image*.dylib build/openxcom.app/Contents/Frameworks/ || echo "SDL_image library may not have been found"
+          # Parameters
+          APP_PATH="build/openxcom.app"
+          FRAMEWORKS_PATH="${APP_PATH}/Contents/Frameworks"
           
-          echo "Copying SDL_mixer library..."
-          sudo cp ${{ env.HOMEBREW_PREFIX }}/lib/libSDL_mixer*.dylib build/openxcom.app/Contents/Frameworks/ || echo "SDL_mixer library may not have been found"
+          # Create a function to copy a library and all its dependencies
+          function copy_lib_and_deps() {
+            local lib_path="$1"
+            local lib_name=$(basename "$lib_path")
+            
+            # Skip system libraries
+            if [[ "$lib_path" == /System/* || "$lib_path" == /usr/lib/* ]]; then
+              echo "Skipping system library: $lib_path"
+              return
+            fi
+            
+            # Skip if already copied
+            if [[ -f "${FRAMEWORKS_PATH}/${lib_name}" ]]; then
+              echo "Already copied: $lib_name"
+              return
+            fi
+            
+            echo "Copying: $lib_path"
+            # Copy the library
+            sudo cp -f "$lib_path" "${FRAMEWORKS_PATH}/"
+            
+            # Set the library ID
+            sudo install_name_tool -id "@rpath/$lib_name" "${FRAMEWORKS_PATH}/${lib_name}"
+            
+            # Get dependencies of this library
+            local deps=$(otool -L "$lib_path" | tail -n +2 | awk '{print $1}' | grep -v '@rpath' | grep -v '/System/' | grep -v '/usr/lib/')
+            
+            # Process each dependency
+            for dep in $deps; do
+              # Skip self-references
+              if [[ "$dep" == "$lib_path" ]]; then
+                continue
+              fi
+              
+              # Copy the dependency
+              copy_lib_and_deps "$dep"
+              
+              # Fix the reference in the current library
+              local dep_name=$(basename "$dep")
+              sudo install_name_tool -change "$dep" "@rpath/$dep_name" "${FRAMEWORKS_PATH}/${lib_name}"
+            done
+          }
           
-          echo "Copying SDL_gfx library..."
-          sudo find ${{ env.HOMEBREW_PREFIX }}/lib -name "libSDL_gfx*dylib" -exec cp {} build/openxcom.app/Contents/Frameworks/ \; || echo "SDL_gfx library may not have been found"
+          # Start with the main executable
+          MAIN_EXE="${APP_PATH}/Contents/MacOS/openxcom"
           
-          echo "Copying YAML-CPP library..."
-          sudo cp ${{ env.HOMEBREW_PREFIX }}/lib/libyaml-cpp*.dylib build/openxcom.app/Contents/Frameworks/ || echo "YAML-CPP library may not have been found"
+          # Get dependencies of the main executable
+          DEPS=$(otool -L "$MAIN_EXE" | tail -n +2 | awk '{print $1}' | grep -v '@rpath' | grep -v '/System/' | grep -v '/usr/lib/')
           
-          echo "Copying zlib library..."
-          sudo cp /usr/lib/libz.1.dylib build/openxcom.app/Contents/Frameworks/ || echo "System zlib library may not have been found"
-          sudo cp ${{ env.HOMEBREW_PREFIX }}/opt/zlib/lib/libz.1.dylib build/openxcom.app/Contents/Frameworks/ || echo "Homebrew zlib library may not have been found"
+          # Process each dependency
+          for dep in $DEPS; do
+            copy_lib_and_deps "$dep"
+            
+            # Fix the reference in the main executable
+            dep_name=$(basename "$dep")
+            sudo install_name_tool -change "$dep" "@rpath/$dep_name" "$MAIN_EXE"
+          done
           
-          # Check if libraries were successfully copied
-          echo "Listing bundled libraries:"
-          ls -la build/openxcom.app/Contents/Frameworks/
+          # Special handling for zlib which is a system library but needs to be bundled
+          if otool -L "$MAIN_EXE" | grep -q '/usr/lib/libz.1.dylib'; then
+            echo "Handling special case for zlib..."
+            if [[ -f "/usr/lib/libz.1.dylib" ]]; then
+              sudo cp -f "/usr/lib/libz.1.dylib" "${FRAMEWORKS_PATH}/"
+              sudo install_name_tool -change "/usr/lib/libz.1.dylib" "@rpath/libz.1.dylib" "$MAIN_EXE"
+            fi
+          fi
           
-          # Make sure all files have proper permissions
-          sudo chmod 755 build/openxcom.app/Contents/Frameworks/*.dylib
-          
-          # Add @rpath to executable
-          sudo install_name_tool -add_rpath @executable_path/../Frameworks build/openxcom.app/Contents/MacOS/openxcom
-          
-          # Fix zlib reference specifically
-          sudo install_name_tool -change "/usr/lib/libz.1.dylib" "@rpath/libz.1.dylib" build/openxcom.app/Contents/MacOS/openxcom || true
+          # Add @rpath to the executable
+          sudo install_name_tool -add_rpath @executable_path/../Frameworks "$MAIN_EXE"
           
           # Ensure the entire app bundle has proper permissions
-          sudo chmod -R 755 build/openxcom.app
-          sudo chown -R $(whoami) build/openxcom.app
+          sudo chmod -R 755 "$APP_PATH"
+          sudo chown -R $(whoami) "$APP_PATH"
+          EOL
+          
+          # Make the script executable
+          chmod +x copy_dependencies.sh
+          
+          # Run the script
+          ${{ env.ARCH_CMD }} ./copy_dependencies.sh
+          
+          # Check what libraries were bundled
+          echo "Libraries in Frameworks directory:"
+          ls -la build/openxcom.app/Contents/Frameworks/
           
           # Remove code signature attributes and sign the app
           sudo xattr -cr build/openxcom.app
           codesign --force --deep --sign - build/openxcom.app
+          
+          # Verify all dependencies are properly linked
+          echo "Final executable dependencies:"
+          otool -L build/openxcom.app/Contents/MacOS/openxcom
 
-      - name: Package app
+      # Create a single zip file directly from the app bundle
+      - name: Package app bundle
         run: |
-          mkdir -p artifacts
           cd build
-          zip -r ../artifacts/${{ env.FILENAME }}.zip openxcom.app
+          mkdir -p "${{ env.FILENAME }}"
+          mv openxcom.app "${{ env.FILENAME }}/"
+          zip -r "${{ env.FILENAME }}.zip" "${{ env.FILENAME }}"
 
-      - name: Archive artifacts
+      # Upload the single zip file
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.FILENAME }}
-          path: artifacts/*
+          path: build/${{ env.FILENAME }}.zip
+          compression-level: 0  # No additional compression
