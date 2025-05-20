@@ -3460,7 +3460,6 @@ void AIModule::brutalThink(BattleAction* action)
 	float bestFallbackScore = 0;
 	Position bestFallbackPosition = myPos;
 	float tuToSaveForHide = 0.5;
-	bool shouldSaveEnergy = _unit->getEnergy() + getEnergyRecovery(_unit) < _unit->getBaseStats()->stamina;
 	bool saveDistance = true;
 	for (auto& reachable : enemyReachable)
 	{
@@ -3525,10 +3524,13 @@ void AIModule::brutalThink(BattleAction* action)
 		float myWalkToDist = myMaxTU + myTuDistFromTarget;
 		std::vector<Tile*> doorTiles = getDoorTiles(_allPathFindingNodes);
 		float visiblePathFromMyPos = 0;
+		bool pathInvolvesFalling = false;
 		for (auto pathPos : getPositionsOnPathTo(targetPosition, _allPathFindingNodes))
 		{
 			if (hasTileSight(myPos, pathPos))
 				visiblePathFromMyPos += 1;
+			if (_save->getTile(pathPos)->hasNoFloor() && !_unit->isFloating())
+				pathInvolvesFalling = true;
 		}
 		for (auto pu : _allPathFindingNodes)
 		{
@@ -3736,8 +3738,21 @@ void AIModule::brutalThink(BattleAction* action)
 								directPeakScore = remainingTimeUnits;
 						}
 					}
-					if (!_unit->isCheatOnMovement() && visiblePathFromMyPos < visiblePath && (myMaxTU == _unit->getTimeUnits() || _save->getTileEngine()->isNextToDoor(myTile)))
-						indirectPeakScore = visiblePath;
+					if (!pathInvolvesFalling && !_unit->isCheatOnMovement() && visiblePathFromMyPos < visiblePath && (myMaxTU == _unit->getTimeUnits() || _save->getTileEngine()->isNextToDoor(myTile)))
+					{
+						if (Options::aiPerformanceOptimization)
+							indirectPeakScore = visiblePathFromMyPos;
+						else
+						{
+							int visibleTilesFrom = 0;
+							for (int i = 0; i < 8; i++)
+							{
+								visibleTilesFrom += _save->getTileEngine()->visibleTilesFrom(_unit, pos, i, true).size();
+							}
+							indirectPeakScore = visibleTilesFrom;
+						}
+						indirectPeakScore *= remainingTimeUnits;
+					}
 				}
 			}
 			float discoverThreat = 0;
