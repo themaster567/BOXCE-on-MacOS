@@ -67,8 +67,6 @@ private:
 	int _tuCostToReachClosestPositionToBreakLos;
 	int _energyCostToReachClosestPositionToBreakLos;
 	int _tuWhenChecking;
-	bool _lookToEnemy = false;
-	bool _lookAround = false;
 	bool _reposition = false;
 	BattleActionType _reserve;
 	UnitFaction _targetFaction;
@@ -269,7 +267,7 @@ public:
 	/// Gives an estimate of a unit's power-level
 	float getUnitPower(BattleUnit* unit);
 	/// returns a vector of Tiles next to doors
-	std::vector<Tile*> getDoorTiles(const std::vector<PathfindingNode*> nodeVector);
+	std::vector<Tile*> getCorpseTiles(const std::vector<PathfindingNode*> nodeVector);
 	/// tries to pick up weapon and ammo from current tile if it's an upgrade
 	bool improveItemization(float currentItemScore, BattleAction* action);
 	/// prepares a grenade-action to use with validateArcingShot
