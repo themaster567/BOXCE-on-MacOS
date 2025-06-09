@@ -97,7 +97,7 @@ private:
 	std::unordered_set<Tile *> _lofTilesLookup;
 	std::unordered_set<Tile *> _noLofTilesLookup;
 	int _tu, _energy, _health, _morale, _stunlevel, _mana;
-	bool _kneeled, _floating, _dontReselect;
+	bool _kneeled, _floating, _dontReselect, _aiMedikitUsed;
 	bool _haveNoFloorBelow = false;
 	int _currentArmor[SIDE_MAX], _maxArmor[SIDE_MAX];
 	int _fatalWounds[BODYPART_MAX];
@@ -153,7 +153,8 @@ private:
 	int _maxViewDistanceAtDark, _maxViewDistanceAtDay;
 	int _maxViewDistanceAtDarkSquared;
 	int _psiVision = 0;
-	int _heatVision = 0;
+	int _visibilityThroughSmoke = 0;
+	int _visibilityThroughFire = 100;
 	SpecialAbility _specab;
 	Armor *_armor;
 	SoldierGender _gender;
@@ -452,7 +453,7 @@ public:
 	/// Fit item into inventory slot.
 	bool fitItemToInventory(const RuleInventory *slot, BattleItem *item, bool testMode = false);
 	/// Add item to unit.
-	bool addItem(BattleItem *item, const Mod *mod, bool allowSecondClip = false, bool allowAutoLoadout = false, bool allowUnloadedWeapons = false, bool allowInfinite = false);
+	bool addItem(BattleItem *item, const Mod *mod, bool allowSecondClip = false, bool allowAutoLoadout = false, bool allowUnloadedWeapons = false, bool allowInfinite = false, bool testMode = false);
 
 	/// Let AI do their thing.
 	void think(BattleAction *action);
@@ -666,7 +667,9 @@ public:
 	/// Get unit psi vision with bonuses.
 	int getPsiVision() const { return _psiVision; }
 	/// Get unit heat vision with bonuses.
-	int getHeatVision() const { return _heatVision; }
+	int getVisibilityThroughSmoke() const { return _visibilityThroughSmoke; }
+	/// Get unit visibility through fire with bonuses.
+	int getVisibilityThroughFire() const { return _visibilityThroughFire; }
 
 	/// Gets the unit's spawn unit.
 	const Unit *getSpawnUnit() const;
@@ -874,7 +877,7 @@ public:
 	/// Get the unit leeroyJenkins flag
 	bool isLeeroyJenkins(bool ignoreBrutal = false) const;
 	/// Get the unit's aggression-flag
-	float getAggressiveness() const;
+	float getAggressiveness(std::string missionType) const;
 	/// Gets the spotter score. This is the number of turns sniper AI units can use spotting info from this unit.
 	int getSpotterDuration() const;
 	/// Remembers the unit's XP (used for shotguns).

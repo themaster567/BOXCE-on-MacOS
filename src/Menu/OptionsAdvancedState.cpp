@@ -386,7 +386,7 @@ void OptionsAdvancedState::lstOptionsClick(Action *action)
 		*i += increment;
 
 		int min = 0, max = 0;
-		if (i == &Options::aggression)
+		if (i == &Options::aggression || i == &Options::baseDefenseAggression)
 		{
 			min = 0;
 			max = 4;
@@ -507,6 +507,11 @@ void OptionsAdvancedState::lstOptionsClick(Action *action)
 		{
 			min = 0;
 			max = 2;
+		}
+		else if (i == &Options::preprimeGrenades)
+		{
+			min = 0;
+			max = 3;
 		}
 
 		if (*i < min)

@@ -23,6 +23,7 @@
 #include "Pathfinding.h"
 #include "../Savegame/BattleUnit.h"
 #include <vector>
+#include <set>
 
 
 namespace OpenXcom
@@ -78,6 +79,8 @@ private:
 	int selectNearestTargetLeeroy(bool canRun);
 	void meleeActionLeeroy(bool canRun);
 	void dont_think(BattleAction *action);
+public:
+	bool medikit_think(BattleMediKitType healOrStim);
 public:
 	/// Creates a new AIModule linked to the game and a certain unit.
 	AIModule(SavedBattleGame *save, BattleUnit *unit, Node *node);
@@ -270,6 +273,8 @@ public:
 	std::vector<Tile*> getCorpseTiles(const std::vector<PathfindingNode*> nodeVector);
 	/// tries to pick up weapon and ammo from current tile if it's an upgrade
 	bool improveItemization(float currentItemScore, BattleAction* action);
+	/// scores a set of tiles based on how long ago they were seen
+	int scoreVisibleTiles(const std::set<Tile*>& tileSet);
 	/// prepares a grenade-action to use with validateArcingShot
 	BattleAction* grenadeThrowAction(Position pos);
 };

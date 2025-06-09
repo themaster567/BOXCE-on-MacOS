@@ -66,7 +66,7 @@ BattleUnit::BattleUnit(const Mod *mod, Soldier *soldier, int depth, const RuleSt
 	_faction(FACTION_PLAYER), _originalFaction(FACTION_PLAYER), _killedBy(FACTION_PLAYER), _id(0), _tile(0),
 	_lastPos(Position()), _direction(0), _toDirection(0), _directionTurret(0), _toDirectionTurret(0),
 	_verticalDirection(0), _status(STATUS_STANDING), _wantsToSurrender(false), _isSurrendering(false), _hasPanickedLastTurn(false), _walkPhase(0), _fallPhase(0), _kneeled(false), _floating(false),
-	_dontReselect(false), _fire(0), _currentAIState(0), _visible(false),
+	_dontReselect(false), _aiMedikitUsed(false), _fire(0), _currentAIState(0), _visible(false),
 	_exp{ }, _expTmp{ },
 	_motionPoints(0), _scannedTurn(-1), _customMarker(0), _kills(0), _hitByFire(false), _hitByAnything(false), _alreadyExploded(false), _fireMaxHit(0), _smokeMaxHit(0), 
 	_moraleRestored(0), _charging(0),
@@ -171,13 +171,15 @@ void BattleUnit::updateArmorFromSoldier(const Mod *mod, Soldier *soldier, Armor 
 	int visibilityDarkBonus = 0;
 	int visibilityDayBonus = 0;
 	int psiVision = 0;
-	int heatVision =  0;
+	int bonusVisibilityThroughSmoke =  0;
+	int bonusVisibilityThroughFire = 0;
 	for (const auto* bonusRule : *soldier->getBonuses(nullptr))
 	{
 		visibilityDarkBonus += bonusRule->getVisibilityAtDark();
 		visibilityDayBonus += bonusRule->getVisibilityAtDay();
 		psiVision += bonusRule->getPsiVision();
-		heatVision += bonusRule->getHeatVision();
+		bonusVisibilityThroughSmoke += bonusRule->getVisibilityThroughSmoke();
+		bonusVisibilityThroughFire += bonusRule->getVisibilityThroughFire();
 	}
 	_maxViewDistanceAtDark = _armor->getVisibilityAtDark() ? _armor->getVisibilityAtDark() : 9;
 	_maxViewDistanceAtDark = Clamp(_maxViewDistanceAtDark + visibilityDarkBonus, 1, mod->getMaxViewDistance());
@@ -185,7 +187,8 @@ void BattleUnit::updateArmorFromSoldier(const Mod *mod, Soldier *soldier, Armor 
 	_maxViewDistanceAtDay = _armor->getVisibilityAtDay() ? _armor->getVisibilityAtDay() : mod->getMaxViewDistance();
 	_maxViewDistanceAtDay = Clamp(_maxViewDistanceAtDay + visibilityDayBonus, 1, mod->getMaxViewDistance());
 	_psiVision = _armor->getPsiVision() + psiVision;
-	_heatVision = _armor->getHeatVision() + heatVision;
+	_visibilityThroughSmoke = _armor->getVisibilityThroughSmoke() + bonusVisibilityThroughSmoke;
+	_visibilityThroughFire = _armor->getVisibilityThroughFire() + bonusVisibilityThroughFire;
 
 
 	_maxArmor[SIDE_FRONT] = _armor->getFrontArmor();
@@ -417,18 +420,18 @@ BattleUnit::BattleUnit(const Mod *mod, Unit *unit, UnitFaction faction, int id, 
 	_faction(faction), _originalFaction(faction), _killedBy(faction), _id(id),
 	_tile(0), _lastPos(Position()), _direction(0), _toDirection(0), _directionTurret(0),
 	_toDirectionTurret(0), _verticalDirection(0), _status(STATUS_STANDING), _wantsToSurrender(false), _isSurrendering(false), _hasPanickedLastTurn(false), _walkPhase(0),
-	_fallPhase(0), _kneeled(false), _floating(false), _dontReselect(false), _fire(0), _currentAIState(0),
-	_allowAutoCombat(true), 
-	_visible(false), _exp{ }, _expTmp{ }, 
-	_motionPoints(0), _scannedTurn(-1), _customMarker(0), _kills(0), _hitByFire(false), _hitByAnything(false), _alreadyExploded(false), _fireMaxHit(0),	_smokeMaxHit(0), 
-	_moraleRestored(0), _charging(0), 
-	_turnsSinceSeenByHostile(255), _turnsSinceSeenByNeutral(255),
-	_turnsSinceSeenByPlayer(255), _tileLastSpottedByHostile(-1), _tileLastSpottedByNeutral(-1), _tileLastSpottedByPlayer(-1), 
-	_tileLastSpottedForBlindShotByHostile(-1), _tileLastSpottedForBlindShotByNeutral(-1),	_tileLastSpottedForBlindShotByPlayer(-1), 
-	_statistics(), _murdererId(0), _mindControllerID(0), _fatalShotSide(SIDE_FRONT), 
-	_fatalShotBodyPart(BODYPART_HEAD), _armor(armor),  _geoscapeSoldier(0),	_unitRules(unit), 
-	_rankInt(0), _turretType(-1), _hidingForTurn(false), _respawn(false), _alreadyRespawned(false), 
-	_isLeeroyJenkins(false), _summonedPlayerUnit(false), _resummonedFakeCivilian(false), _pickUpWeaponsMoreActively(false),	_disableIndicators(false), 
+	_fallPhase(0), _kneeled(false), _floating(false), _dontReselect(false), _aiMedikitUsed(false), _fire(0), _currentAIState(0),
+	_allowAutoCombat(true),
+	_visible(false), _exp{ }, _expTmp{ },
+	_motionPoints(0), _scannedTurn(-1), _customMarker(0), _kills(0), _hitByFire(false), _hitByAnything(false), _alreadyExploded(false), _fireMaxHit(0), _smokeMaxHit(0),
+	_moraleRestored(0), _charging(0),
+	_turnsSinceSeenByHostile(255), _turnsSinceSeenByNeutral(255), _turnsSinceSeenByPlayer(255),
+	_tileLastSpottedByHostile(-1), _tileLastSpottedByNeutral(-1), _tileLastSpottedByPlayer(-1),
+	_tileLastSpottedForBlindShotByHostile(-1), _tileLastSpottedForBlindShotByNeutral(-1), _tileLastSpottedForBlindShotByPlayer(-1),
+	_statistics(), _murdererId(0), _mindControllerID(0), _fatalShotSide(SIDE_FRONT),
+	_fatalShotBodyPart(BODYPART_HEAD), _armor(armor), _geoscapeSoldier(0), _unitRules(unit),
+	_rankInt(0), _turretType(-1), _hidingForTurn(false), _respawn(false), _alreadyRespawned(false),
+	_isLeeroyJenkins(false), _summonedPlayerUnit(false), _resummonedFakeCivilian(false), _pickUpWeaponsMoreActively(false), _disableIndicators(false),
 	_vip(false), _bannedInNextStage(false), _skillMenuCheck(false)
 {
 	if (enviro)
@@ -557,7 +560,8 @@ void BattleUnit::updateArmorFromNonSoldier(const Mod* mod, Armor* newArmor, int 
 	_maxViewDistanceAtDarkSquared = _maxViewDistanceAtDark * _maxViewDistanceAtDark;
 	_maxViewDistanceAtDay = _armor->getVisibilityAtDay() ? _armor->getVisibilityAtDay() : mod->getMaxViewDistance();
 	_psiVision = _armor->getPsiVision();
-	_heatVision =  _armor->getHeatVision();
+	_visibilityThroughSmoke =  _armor->getVisibilityThroughSmoke();
+	_visibilityThroughFire = _armor->getVisibilityThroughFire();
 
 
 	_maxArmor[SIDE_FRONT] = _armor->getFrontArmor();
@@ -687,6 +691,7 @@ void BattleUnit::load(const YAML::YamlNodeReader& node, const Mod *mod, const Sc
 	reader.tryRead("killedBy", _killedBy);
 	reader.tryRead("kills", _kills);
 	reader.tryRead("dontReselect", _dontReselect);
+	reader.tryRead("aiMedikitUsed", _aiMedikitUsed);
 
 	// Custom additions
 	reader.tryRead("isBrutal", _isBrutal);
@@ -739,6 +744,8 @@ void BattleUnit::load(const YAML::YamlNodeReader& node, const Mod *mod, const Sc
 
 	reader.tryRead("allowAutoCombat", _allowAutoCombat);
 	reader.tryRead("aggression", _aggression);
+
+	reader.tryRead("hasPanickedLastTurn", _hasPanickedLastTurn);
 
 	_scriptValues.load(reader, shared);
 }
@@ -831,6 +838,8 @@ void BattleUnit::save(YAML::YamlNodeWriter writer, const ScriptGlobal *shared) c
 		writer.write("kills", _kills);
 	if (_faction == FACTION_PLAYER && _dontReselect)
 		writer.write("dontReselect", _dontReselect);
+	if (_aiMedikitUsed)
+		writer.write("aiMedikitUsed", _aiMedikitUsed);
 	if (_previousOwner)
 		writer.write("previousOwner", _previousOwner->getId());
 	if (_spawnUnit)
@@ -911,6 +920,8 @@ void BattleUnit::save(YAML::YamlNodeWriter writer, const ScriptGlobal *shared) c
 	// Adding missing entries from HEAD using new style
 	writer.write("allowAutoCombat", _allowAutoCombat);
 	writer.write("aggression", _aggression);
+
+	writer.write("hasPanickedLastTurn", _hasPanickedLastTurn);
 
 	// Save script values using the new writer method
 	_scriptValues.save(writer, shared);
@@ -3003,6 +3014,7 @@ void BattleUnit::prepareNewTurn(bool fullProcess)
 
 	_hitByFire = false;
 	_dontReselect = false;
+	_aiMedikitUsed = false;
 	_motionPoints = 0;
 	setWantToEndTurn(false);
 
@@ -3243,7 +3255,7 @@ bool BattleUnit::fitItemToInventory(const RuleInventory *slot, BattleItem *item,
  * @param allowUnloadedWeapons allow equip of weapons without ammo.
  * @return if the item was placed or not.
  */
-bool BattleUnit::addItem(BattleItem *item, const Mod *mod, bool allowSecondClip, bool allowAutoLoadout, bool allowUnloadedWeapons, bool allowInfinite)
+bool BattleUnit::addItem(BattleItem *item, const Mod *mod, bool allowSecondClip, bool allowAutoLoadout, bool allowUnloadedWeapons, bool allowInfinite, bool testMode)
 {
 	RuleInventory *rightHand = mod->getInventoryRightHand();
 	RuleInventory *leftHand = mod->getInventoryLeftHand();
@@ -3312,7 +3324,7 @@ bool BattleUnit::addItem(BattleItem *item, const Mod *mod, bool allowSecondClip,
 			}
 		}
 		// or in the left/right hand
-		if (!placed && (fitItemToInventory(rightHand, item) || fitItemToInventory(leftHand, item)))
+		if (!placed && (fitItemToInventory(rightHand, item, testMode) || fitItemToInventory(leftHand, item, testMode)))
 		{
 			placed = true;
 			item->setXCOMProperty(getFaction() == FACTION_PLAYER && !isSummonedPlayerUnit());
@@ -3351,12 +3363,12 @@ bool BattleUnit::addItem(BattleItem *item, const Mod *mod, bool allowSecondClip,
 			if (getBaseStats()->strength * 0.66 >= weight) // weight is always considered 0 for aliens
 			{
 				// C1 - vanilla right-hand main weapon (and OXCE left-hand second main weapon)
-				if (fitItemToInventory(rightHand, item))
+				if (fitItemToInventory(rightHand, item, testMode))
 				{
 					placed = true;
 				}
 				bool allowTwoMainWeapons = (getFaction() != FACTION_PLAYER) || _armor->getAllowTwoMainWeapons();
-				if (!placed && allowTwoMainWeapons && fitItemToInventory(leftHand, item))
+				if (!placed && allowTwoMainWeapons && fitItemToInventory(leftHand, item, testMode))
 				{
 					placed = true;
 				}
@@ -3407,7 +3419,7 @@ bool BattleUnit::addItem(BattleItem *item, const Mod *mod, bool allowSecondClip,
 		if (rule->getBattleType() == BT_PSIAMP && getFaction() == FACTION_HOSTILE)
 		{
 			// C2 - vanilla left-hand psi-amp for hostiles
-			if (fitItemToInventory(rightHand, item) || fitItemToInventory(leftHand, item))
+			if (fitItemToInventory(rightHand, item, testMode) || fitItemToInventory(leftHand, item, testMode))
 			{
 				placed = true;
 			}
@@ -3424,7 +3436,7 @@ bool BattleUnit::addItem(BattleItem *item, const Mod *mod, bool allowSecondClip,
 						const RuleInventory* slot = item->getRules()->getDefaultInventorySlot();
 						if (slot->getType() != INV_GROUND)
 						{
-							placed = fitItemToInventory(slot, item);
+							placed = fitItemToInventory(slot, item, testMode);
 							if (placed)
 							{
 								break;
@@ -3443,7 +3455,7 @@ bool BattleUnit::addItem(BattleItem *item, const Mod *mod, bool allowSecondClip,
 							RuleInventory* slot = mod->getInventory(s);
 							if (slot->getType() != INV_GROUND)
 							{
-								placed = fitItemToInventory(slot, item);
+								placed = fitItemToInventory(slot, item, testMode);
 								if (placed)
 								{
 									break;
@@ -3477,7 +3489,7 @@ bool BattleUnit::addItem(BattleItem *item, const Mod *mod, bool allowSecondClip,
 					{
 						if (cheapestInventoryToMoveToHand->getType() == INV_SLOT)
 						{
-							placed = fitItemToInventory(cheapestInventoryToMoveToHand, item);
+							placed = fitItemToInventory(cheapestInventoryToMoveToHand, item, testMode);
 						}
 					}
 				}
@@ -3490,7 +3502,7 @@ bool BattleUnit::addItem(BattleItem *item, const Mod *mod, bool allowSecondClip,
 						RuleInventory* slot = mod->getInventory(s);
 						if (slot->getType() == INV_SLOT)
 						{
-							placed = fitItemToInventory(slot, item);
+							placed = fitItemToInventory(slot, item, testMode);
 							if (placed)
 							{
 								break;
@@ -3515,6 +3527,13 @@ bool BattleUnit::addItem(BattleItem *item, const Mod *mod, bool allowSecondClip,
 void BattleUnit::think(BattleAction *action)
 {
 	reloadAmmo();
+	if (!_aiMedikitUsed)
+	{
+		// only perform once per turn
+		_aiMedikitUsed = true;
+		while (_currentAIState->medikit_think(BMT_HEAL)) {}
+		while (_currentAIState->medikit_think(BMT_STIMULANT)) {}
+	}
 	_currentAIState->think(action);
 }
 
@@ -6202,6 +6221,8 @@ bool BattleUnit::isAvoidMines() const
 		return false;
 	if (isLeeroyJenkins())
 		return false;
+	if (getOriginalFaction() != getFaction())
+		return false;
 	if (Options::avoidMines || getFaction() == FACTION_PLAYER)
 		return true;
 	return false;
@@ -6313,15 +6334,20 @@ bool BattleUnit::isLeeroyJenkins(bool ignoreBrutal) const
 		return false;
 }
 
-float BattleUnit::getAggressiveness() const
+float BattleUnit::getAggressiveness(std::string missionType) const
 {
 	if (getFaction() == FACTION_PLAYER)
 		return getAggression();
+	int aggressionSettingToUse = Options::aggression;
+	if (missionType == "STR_BASE_DEFENSE")
+	{
+		aggressionSettingToUse = Options::baseDefenseAggression;
+	}
 	float aggressiveness = 0;
-	if (Options::aggression == 4)
+	if (aggressionSettingToUse == 4)
 		aggressiveness = getAggression();
 	else
-		return Options::aggression;
+		return aggressionSettingToUse;
 	return aggressiveness;
 }
 
@@ -7152,7 +7178,8 @@ void BattleUnit::ScriptRegister(ScriptParserBase* parser)
 	bu.add<&BattleUnit::getMaxViewDistanceAtDay>("getMaxViewDistanceAtDay", "get maximum visibility distance in tiles to another unit at day");
 	bu.add<&BattleUnit::getMaxViewDistance>("getMaxViewDistance", "calculate maximum visibility distance consider camouflage, first arg is base visibility, second arg is cammo reduction, third arg is anti-cammo boost");
 	bu.add<&BattleUnit::getPsiVision>("getPsiVision");
-	bu.add<&BattleUnit::getHeatVision>("getHeatVision");
+	bu.add<&BattleUnit::getVisibilityThroughSmoke>("getHeatVision", "getVisibilityThroughSmoke");
+	bu.add<&BattleUnit::getVisibilityThroughFire>("getVisibilityThroughFire", "getVisibilityThroughFire");
 
 	bu.add<&setSpawnUnitScript>("setSpawnUnit", "set type of zombie will be spawn from current unit, it will reset everything to default (hostile & instant)");
 	bu.add<&getSpawnUnitScript>("getSpawnUnit", "get type of zombie will be spawn from current unit");

@@ -1922,10 +1922,9 @@ bool TileEngine::visible(BattleUnit *currentUnit, Tile *tile)
 		}
 	}
 
-	// heat vision should be blind by looking directly through fire
-	int fireDensityFactor = Clamp(currentUnit->getHeatVision(), 0, 100);
 	// heat vision 100% = smoke effectiveness 0%
-	int smokeDensityFactor = 100 - fireDensityFactor;
+	int smokeDensityFactor = 100 - Clamp(currentUnit->getVisibilityThroughSmoke(), 0, 100);
+	int fireDensityFactor = 100 - Clamp(currentUnit->getVisibilityThroughFire(), 0, 100);
 
 	if (unitSeen)
 	{
@@ -2103,9 +2102,8 @@ bool TileEngine::isTileInLOS(BattleAction *action, Tile *tile, bool drawing)
 	originVoxel = getSightOriginVoxel(currentUnit);
 
 	// heat vision 100% = smoke effectiveness 0%
-	int smokeDensityFactor = 100 - currentUnit->getArmor()->getHeatVision();
-	// heat vision should be blind by looking directly through fire
-	int fireDensityFactor = currentUnit->getArmor()->getHeatVision();
+	int smokeDensityFactor = 100 - Clamp(currentUnit->getVisibilityThroughSmoke(), 0, 100);
+	int fireDensityFactor = 100 - Clamp(currentUnit->getVisibilityThroughFire(), 0, 100);
 
 	if (seen)
 	{
@@ -4675,14 +4673,14 @@ int TileEngine::calculateLineTile(Position origin, Position target, std::vector<
 			}
 			if (minLightBlock > 0 && result)
 			{
-				MapData* objectMapData = _save->getTile(lastPoint)->getMapData(O_OBJECT);
+				MapData* objectMapData = _save->getTile(lastPoint)  ? _save->getTile(lastPoint)->getMapData(O_OBJECT) : nullptr;
 				if (objectMapData && objectMapData->getLightBlock() < minLightBlock)
 				{
 					result = false;
 				}
 				else
 				{
-					MapData* objectMapData = _save->getTile(point)->getMapData(O_OBJECT);
+					MapData* objectMapData = _save->getTile(point) ? _save->getTile(point)->getMapData(O_OBJECT) : nullptr;
 					if (objectMapData && objectMapData->getLightBlock() < minLightBlock)
 					{
 						result = false;
@@ -5650,6 +5648,7 @@ void TileEngine::itemMoveInventory(Tile *t, BattleUnit *unit, BattleItem *item, 
 						_save->getTileEngine()->setDangerZone(p, radius, dropper);
 					}
 				}
+				dropper->updateEnemyKnowledge(_save->getTileIndex(p), true, false);
 			}
 			item->moveToOwner(nullptr);
 			t->addItem(item, slot);
@@ -6563,7 +6562,7 @@ bool TileEngine::isNearDoor(Tile* tile)
 	return false;
 }
 
-std::set<Tile*> TileEngine::visibleTilesFrom(BattleUnit* unit, Position pos, int direction, bool onlyNew)
+std::set<Tile*> TileEngine::visibleTilesFrom(BattleUnit* unit, Position pos, int direction, bool onlyNew, bool ignoreAirTiles)
 {
 	std::set<Tile*> visibleFrom;
 
@@ -6624,6 +6623,12 @@ std::set<Tile*> TileEngine::visibleTilesFrom(BattleUnit* unit, Position pos, int
 
 					if (_save->getTile(posTest)) // inside map?
 					{
+						if (ignoreAirTiles)
+						{
+							// skip air tiles
+							if (_save->getTile(posTest)->hasNoFloor())
+								continue;
+						}
 						// this sets tiles to discovered if they are in LOS - tile visibility is not calculated in voxelspace but in tilespace
 						// large units have "4 pair of eyes"
 						int size = unit->getArmor()->getSize();
